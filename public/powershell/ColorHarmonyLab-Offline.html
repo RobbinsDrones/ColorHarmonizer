@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Photo Color Analysis & Harmony Lab (Offline Portable Edition)</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card: #0f172a;
+      --border: #1e293b;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --primary: #6366f1;
+      --primary-hover: #4f46e5;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: rgba(15, 23, 42, 0.9);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(8px);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand-icon {
+      width: 36px; height: 36px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+    }
+    .brand h1 { font-size: 17px; font-weight: 700; color: #fff; }
+    .brand p { font-size: 11px; color: var(--muted); }
+    .actions { display: flex; gap: 8px; align-items: center; }
+    button, .btn {
+      background: #1e293b;
+      color: #fff;
+      border: 1px solid #334155;
+      padding: 7px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex; align-items: center; gap: 6px;
+      transition: all 0.15s ease;
+    }
+    button:hover, .btn:hover { background: #334155; }
+    .btn-primary { background: var(--primary); border-color: var(--primary); }
+    .btn-primary:hover { background: var(--primary-hover); }
+    main {
+      flex: 1;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 20px;
+      display: grid;
+      grid-template-columns: 1fr 440px;
+      gap: 20px;
+    }
+    @media (max-width: 1024px) {
+      main { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+    }
+    .canvas-container {
+      position: relative;
+      background: #020617;
+      border-radius: 12px;
+      min-height: 480px;
+      display: flex; align-items: center; justify-content: center;
+      overflow: hidden;
+      cursor: crosshair;
+      border: 1px solid #1e293b;
+    }
+    #photoCanvas {
+      max-width: 100%;
+      max-height: 520px;
+      object-fit: contain;
+      display: block;
+    }
+    .pin {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      border: 2px solid #fff;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: bold;
+      cursor: pointer;
+      transition: transform 0.15s ease;
+      z-index: 10;
+    }
+    .pin:hover { transform: translate(-50%, -50%) scale(1.2); }
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    .palette-item {
+      background: #070b14;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 8px 10px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .swatch {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.2);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: bold; font-size: 11px;
+      flex-shrink: 0;
+    }
+    .wheel-wrap {
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      margin: 12px 0;
+    }
+    #wheelCanvas {
+      border-radius: 50%;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+      background: #020617;
+      border: 1px solid #1e293b;
+    }
+    .badge {
+      background: rgba(99, 102, 241, 0.15);
+      color: #818cf8;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: bold;
+    }
+    .nudge-item {
+      background: #070b14;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-bottom: 6px;
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="brand-icon">🎨</div>
+      <div>
+        <h1>Photo Color Analysis & Harmony Lab</h1>
+        <p>Standalone Offline Edition • Zero Dependencies</p>
+      </div>
+    </div>
+    <div class="actions">
+      <label class="btn btn-primary">
+        📂 Upload Photo
+        <input type="file" id="fileInput" accept="image/*" style="display:none">
+      </label>
+      <button id="btnSampleSunset">Preset: Sunset</button>
+      <button id="btnSampleCyber">Preset: Cyberpunk</button>
+      <button id="btnReset">Reset Pins</button>
+      <button id="btnExport">💾 Export JSON</button>
+    </div>
+  </header>
+
+  <main>
+    <div style="display:flex; flex-direction:column; gap:16px;">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h2 style="font-size:14px; font-weight:600;">Interactive Photo Sampler</h2>
+          <span id="pinCount" class="badge">0 / 10 pins</span>
+        </div>
+        <div class="canvas-container" id="canvasContainer">
+          <canvas id="photoCanvas"></canvas>
+          <div id="pinsOverlay"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:8px;">
+          <span>Click anywhere on the photo to drop color sampling pins</span>
+          <span id="imgDimensions">Dimensions: 800 x 500</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--muted); margin-bottom:8px;">Sampled Color Palette</h3>
+        <div class="palette-grid" id="paletteGrid">
+          <p style="color:var(--muted); font-size:12px; font-style:italic;">No points picked yet. Click photo to sample.</p>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:16px;">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h2 style="font-size:14px; font-weight:600;">2D Color Wheel Distribution</h2>
+          <label style="font-size:11px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+            <input type="checkbox" id="chkPureHue"> Pure Hue Mode
+          </label>
+        </div>
+        
+        <div class="wheel-wrap">
+          <canvas id="wheelCanvas" width="280" height="280"></canvas>
+          <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+            <span style="font-size:12px; color:var(--muted);">Natural Harmony:</span>
+            <span id="lblHarmony" class="badge">Monochromatic</span>
+          </div>
+        </div>
+
+        <div style="margin-top:10px;">
+          <label style="font-size:11px; color:var(--muted); display:block; margin-bottom:4px;">Target Overlay Guide:</label>
+          <select id="selHarmony" style="width:100%; background:#070b14; border:1px solid #1e293b; color:#fff; padding:6px 10px; border-radius:8px; font-size:12px;">
+            <option value="auto">Auto (Match Detected)</option>
+            <option value="Complementary">Complementary (180°)</option>
+            <option value="Split-Complementary">Split-Complementary (150°/210°)</option>
+            <option value="Analogous">Analogous (30° Adjacent)</option>
+            <option value="Triadic">Triadic (120° Spaced)</option>
+            <option value="Tetradic">Tetradic (90° Square)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="font-size:12px; font-weight:600; text-transform:uppercase; color:var(--muted); margin-bottom:10px;">Hue Alignment Nudge Shifts</h3>
+        <div id="nudgeList">
+          <p style="color:var(--muted); font-size:12px; font-style:italic;">Sample points to see hue alignment recommendations.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let markers = [];
+    let currentImage = null;
+    let pureHue = false;
+    let targetRule = 'auto';
+
+    const photoCanvas = document.getElementById('photoCanvas');
+    const photoCtx = photoCanvas.getContext('2d');
+    const wheelCanvas = document.getElementById('wheelCanvas');
+    const wheelCtx = wheelCanvas.getContext('2d');
+    const pinsOverlay = document.getElementById('pinsOverlay');
+
+    function rgbToHex(r, g, b) {
+      return '#' + [r, g, b].map(x => Math.round(x).toString(16).padStart(2, '0')).join('');
+    }
+
+    function rgbToHsl(r, g, b) {
+      r /= 255; g /= 255; b /= 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      let h, s, l = (max + min) / 2;
+      if (max === min) {
+        h = s = 0;
+      } else {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+          case g: h = (b - r) / d + 2; break;
+          case b: h = (r - g) / d + 4; break;
+        }
+        h /= 6;
+      }
+      return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) };
+    }
+
+    function angleDiff(a, b) {
+      let diff = (b - a + 180) % 360 - 180;
+      return diff < -180 ? diff + 360 : diff;
+    }
+
+    function detectHarmony() {
+      if (markers.length < 2) return { type: 'Monochromatic', primaryHue: markers[0]?.hsl.h || 0 };
+      const hues = markers.map(m => m.hsl.h).sort((a,b) => a - b);
+      let maxGap = 0;
+      for (let i = 0; i < hues.length; i++) {
+        const gap = (hues[(i+1)%hues.length] - hues[i] + 360) % 360;
+        if (gap > maxGap) maxGap = gap;
+      }
+      const spread = 360 - maxGap;
+      const hasOpposite = hues.some(h1 => hues.some(h2 => Math.abs(angleDiff(h1, h2)) >= 140 && Math.abs(angleDiff(h1, h2)) <= 220));
+
+      if (spread <= 35) return { type: 'Monochromatic', primaryHue: hues[0] };
+      if (spread <= 75) return { type: 'Analogous', primaryHue: hues[0] };
+      if (hasOpposite && spread > 150 && spread < 210) return { type: 'Complementary', primaryHue: hues[0] };
+      if (spread > 200 && spread < 260) return { type: 'Triadic', primaryHue: hues[0] };
+      if (hasOpposite && spread >= 210) return { type: 'Split-Complementary', primaryHue: hues[0] };
+      return { type: 'Tetradic / Multi-Tone', primaryHue: hues[0] };
+    }
+
+    function drawWheel() {
+      const w = wheelCanvas.width;
+      const h = wheelCanvas.height;
+      const cx = w / 2;
+      const cy = h / 2;
+      const radius = cx - 22;
+
+      wheelCtx.clearRect(0, 0, w, h);
+
+      // Radial Spectrum
+      for (let angle = 0; angle < 360; angle += 0.5) {
+        const a1 = (angle - 0.6) * Math.PI / 180;
+        const a2 = (angle + 0.6) * Math.PI / 180;
+        const grad = wheelCtx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+        grad.addColorStop(0, '#ffffff');
+        grad.addColorStop(0.7, `hsl(${angle}, 85%, 50%)`);
+        grad.addColorStop(1, `hsl(${angle}, 100%, 35%)`);
+        wheelCtx.beginPath();
+        wheelCtx.moveTo(cx, cy);
+        wheelCtx.arc(cx, cy, radius, a1, a2);
+        wheelCtx.closePath();
+        wheelCtx.fillStyle = grad;
+        wheelCtx.fill();
+      }
+
+      // Rings
+      wheelCtx.strokeStyle = 'rgba(255,255,255,0.2)';
+      wheelCtx.lineWidth = 1;
+      [0.33, 0.66, 1].forEach(r => {
+        wheelCtx.beginPath();
+        wheelCtx.arc(cx, cy, radius * r, 0, Math.PI * 2);
+        wheelCtx.stroke();
+      });
+
+      // Overlay guides
+      const harmony = detectHarmony();
+      document.getElementById('lblHarmony').textContent = harmony.type;
+      const activeRule = targetRule === 'auto' ? harmony.type : targetRule;
+
+      if (markers.length > 0) {
+        const base = harmony.primaryHue;
+        const drawGuide = (angle, color) => {
+          const rad = angle * Math.PI / 180;
+          wheelCtx.strokeStyle = color;
+          wheelCtx.lineWidth = 2;
+          wheelCtx.setLineDash([4, 4]);
+          wheelCtx.beginPath();
+          wheelCtx.moveTo(cx, cy);
+          wheelCtx.lineTo(cx + radius * Math.cos(rad), cy + radius * Math.sin(rad));
+          wheelCtx.stroke();
+          wheelCtx.setLineDash([]);
+        };
+
+        if (activeRule.includes('Complementary') && !activeRule.includes('Split')) {
+          drawGuide(base, '#38bdf8');
+          drawGuide(base + 180, '#f87171');
+        } else if (activeRule.includes('Split-Complementary')) {
+          drawGuide(base, '#38bdf8');
+          drawGuide(base + 150, '#34d399');
+          drawGuide(base + 210, '#fbbf24');
+        } else if (activeRule.includes('Triadic')) {
+          drawGuide(base, '#f472b6');
+          drawGuide(base + 120, '#a78bfa');
+          drawGuide(base + 240, '#38bdf8');
+        } else if (activeRule.includes('Analogous')) {
+          drawGuide(base - 30, 'rgba(255,255,255,0.5)');
+          drawGuide(base, '#38bdf8');
+          drawGuide(base + 30, 'rgba(255,255,255,0.5)');
+        }
+      }
+
+      // Plot markers
+      markers.forEach(m => {
+        const rad = m.hsl.h * Math.PI / 180;
+        const dist = pureHue ? radius : (m.hsl.s / 100) * radius;
+        const px = cx + dist * Math.cos(rad);
+        const py = cy + dist * Math.sin(rad);
+
+        wheelCtx.beginPath();
+        wheelCtx.arc(px, py, 9, 0, Math.PI * 2);
+        wheelCtx.fillStyle = m.hex;
+        wheelCtx.fill();
+        wheelCtx.lineWidth = 2;
+        wheelCtx.strokeStyle = '#ffffff';
+        wheelCtx.stroke();
+
+        wheelCtx.fillStyle = m.hsl.l > 60 ? '#000000' : '#ffffff';
+        wheelCtx.font = 'bold 9px sans-serif';
+        wheelCtx.textAlign = 'center';
+        wheelCtx.textBaseline = 'middle';
+        wheelCtx.fillText(m.id, px, py);
+      });
+    }
+
+    function renderPins() {
+      pinsOverlay.innerHTML = '';
+      if (!photoCanvas.width) return;
+
+      const rect = photoCanvas.getBoundingClientRect();
+      const containerRect = document.getElementById('canvasContainer').getBoundingClientRect();
+      const offsetX = rect.left - containerRect.left;
+      const offsetY = rect.top - containerRect.top;
+
+      markers.forEach(m => {
+        const pin = document.createElement('div');
+        pin.className = 'pin';
+        pin.style.backgroundColor = m.hex;
+        pin.style.color = m.hsl.l > 60 ? '#000' : '#fff';
+        pin.style.left = `${offsetX + (m.xPct / 100) * rect.width}px`;
+        pin.style.top = `${offsetY + (m.yPct / 100) * rect.height}px`;
+        pin.textContent = m.id;
+        pinsOverlay.appendChild(pin);
+      });
+
+      // Palette grid
+      const grid = document.getElementById('paletteGrid');
+      if (markers.length === 0) {
+        grid.innerHTML = '<p style="color:var(--muted); font-size:12px; font-style:italic;">No points picked yet. Click photo to sample.</p>';
+      } else {
+        grid.innerHTML = markers.map(m => `
+          <div class="palette-item">
+            <div class="swatch" style="background:${m.hex}; color:${m.hsl.l > 60 ? '#000' : '#fff'}">${m.id}</div>
+            <div>
+              <div style="font-weight:600; font-size:12px;">${m.label}</div>
+              <div style="font-family:monospace; font-size:11px; color:var(--muted);">${m.hex} • H:${m.hsl.h}°</div>
+            </div>
+          </div>
+        `).join('');
+      }
+
+      // Nudge list
+      const nudgeDiv = document.getElementById('nudgeList');
+      if (markers.length === 0) {
+        nudgeDiv.innerHTML = '<p style="color:var(--muted); font-size:12px; font-style:italic;">Sample points to see hue alignment recommendations.</p>';
+      } else {
+        const harmony = detectHarmony();
+        const base = harmony.primaryHue;
+        const activeRule = targetRule === 'auto' ? harmony.type : targetRule;
+        let targets = [base];
+        if (activeRule.includes('Complementary') && !activeRule.includes('Split')) targets = [base, (base + 180) % 360];
+        else if (activeRule.includes('Split-Complementary')) targets = [base, (base + 150) % 360, (base + 210) % 360];
+        else if (activeRule.includes('Triadic')) targets = [base, (base + 120) % 360, (base + 240) % 360];
+        else if (activeRule.includes('Analogous')) targets = [(base - 30 + 360) % 360, base, (base + 30) % 360];
+
+        nudgeDiv.innerHTML = markers.map(m => {
+          let closest = targets[0];
+          let minD = Math.abs(angleDiff(m.hsl.h, targets[0]));
+          targets.forEach(t => {
+            const d = Math.abs(angleDiff(m.hsl.h, t));
+            if (d < minD) { minD = d; closest = t; }
+          });
+          const shift = angleDiff(m.hsl.h, closest);
+          const aligned = Math.abs(shift) <= 5;
+          return `
+            <div class="nudge-item">
+              <span>#${m.id} ${m.label} (${m.hsl.h}°)</span>
+              <span style="font-weight:bold; color:${aligned ? '#34d399' : '#fbbf24'}">
+                ${aligned ? '✔ Perfect Fit' : (shift > 0 ? `+${shift}° Shift` : `${shift}° Shift`)}
+              </span>
+            </div>
+          `;
+        }).join('');
+      }
+
+      document.getElementById('pinCount').textContent = `${markers.length} / 10 pins`;
+      drawWheel();
+    }
+
+    function loadImage(url) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        currentImage = img;
+        photoCanvas.width = img.width;
+        photoCanvas.height = img.height;
+        photoCtx.drawImage(img, 0, 0);
+        document.getElementById('imgDimensions').textContent = `Dimensions: ${img.width} x ${img.height}`;
+        markers = [];
+        renderPins();
+      };
+      img.src = url;
+    }
+
+    // Canvas click to sample
+    photoCanvas.addEventListener('click', (e) => {
+      if (!currentImage || markers.length >= 10) return;
+      const rect = photoCanvas.getBoundingClientRect();
+      const xPct = ((e.clientX - rect.left) / rect.width) * 100;
+      const yPct = ((e.clientY - rect.top) / rect.height) * 100;
+
+      const px = Math.floor((xPct / 100) * photoCanvas.width);
+      const py = Math.floor((yPct / 100) * photoCanvas.height);
+      const pixel = photoCtx.getImageData(px, py, 1, 1).data;
+      const r = pixel[0], g = pixel[1], b = pixel[2];
+
+      markers.push({
+        id: markers.length + 1,
+        label: `Sample ${markers.length + 1}`,
+        xPct: Number(xPct.toFixed(1)),
+        yPct: Number(yPct.toFixed(1)),
+        r, g, b,
+        hex: rgbToHex(r, g, b),
+        hsl: rgbToHsl(r, g, b)
+      });
+      renderPins();
+    });
+
+    // File upload
+    document.getElementById('fileInput').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = ev => loadImage(ev.target.result);
+        reader.readAsDataURL(file);
+      }
+    });
+
+    document.getElementById('btnReset').addEventListener('click', () => {
+      markers = [];
+      renderPins();
+    });
+
+    document.getElementById('chkPureHue').addEventListener('change', (e) => {
+      pureHue = e.target.checked;
+      drawWheel();
+    });
+
+    document.getElementById('selHarmony').addEventListener('change', (e) => {
+      targetRule = e.target.value;
+      renderPins();
+    });
+
+    document.getElementById('btnExport').addEventListener('click', () => {
+      if (markers.length === 0) return alert('No markers to export.');
+      const blob = new Blob([JSON.stringify(markers, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'color-harmony-palette.json';
+      a.click();
+    });
+
+    // Presets
+    document.getElementById('btnSampleSunset').addEventListener('click', () => {
+      loadImage('https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?auto=format&fit=crop&w=1200&q=80');
+    });
+    document.getElementById('btnSampleCyber').addEventListener('click', () => {
+      loadImage('https://images.unsplash.com/photo-1519501025264-65ba15a82390?auto=format&fit=crop&w=1200&q=80');
+    });
+
+    // Load initial
+    loadImage('https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?auto=format&fit=crop&w=1200&q=80');
+    window.addEventListener('resize', renderPins);
+  </script>
+</body>
+</html>
