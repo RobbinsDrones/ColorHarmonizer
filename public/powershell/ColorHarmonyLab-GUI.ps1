@@ -197,8 +197,8 @@ $topPanel.Controls.Add($subtitleLabel)
 # Buttons on Top Panel
 $btnOpen = New-Object System.Windows.Forms.Button
 $btnOpen.Text = "📂 Open Photo"
-$btnOpen.Location = New-Object System.Drawing.Point(620, 15)
-$btnOpen.Size = New-Object System.Drawing.Size(115, 36)
+$btnOpen.Location = New-Object System.Drawing.Point(520, 15)
+$btnOpen.Size = New-Object System.Drawing.Size(105, 36)
 $btnOpen.BackColor = [System.Drawing.Color]::FromArgb(79, 70, 229) # Indigo-600
 $btnOpen.ForeColor = [System.Drawing.Color]::White
 $btnOpen.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -206,10 +206,21 @@ $btnOpen.FlatAppearance.BorderSize = 0
 $btnOpen.Cursor = [System.Windows.Forms.Cursors]::Hand
 $topPanel.Controls.Add($btnOpen)
 
+$btnAuto = New-Object System.Windows.Forms.Button
+$btnAuto.Text = "✨ Auto Extract"
+$btnAuto.Location = New-Object System.Drawing.Point(635, 15)
+$btnAuto.Size = New-Object System.Drawing.Size(115, 36)
+$btnAuto.BackColor = [System.Drawing.Color]::FromArgb(217, 119, 6) # Amber-600
+$btnAuto.ForeColor = [System.Drawing.Color]::White
+$btnAuto.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnAuto.FlatAppearance.BorderSize = 0
+$btnAuto.Cursor = [System.Windows.Forms.Cursors]::Hand
+$topPanel.Controls.Add($btnAuto)
+
 $btnSample = New-Object System.Windows.Forms.Button
 $btnSample.Text = "🎨 Demo Photo"
-$btnSample.Location = New-Object System.Drawing.Point(745, 15)
-$btnSample.Size = New-Object System.Drawing.Size(110, 36)
+$btnSample.Location = New-Object System.Drawing.Point(760, 15)
+$btnSample.Size = New-Object System.Drawing.Size(105, 36)
 $btnSample.BackColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
 $btnSample.ForeColor = [System.Drawing.Color]::White
 $btnSample.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -219,8 +230,8 @@ $topPanel.Controls.Add($btnSample)
 
 $btnReset = New-Object System.Windows.Forms.Button
 $btnReset.Text = "🔄 Reset Pins"
-$btnReset.Location = New-Object System.Drawing.Point(865, 15)
-$btnReset.Size = New-Object System.Drawing.Size(100, 36)
+$btnReset.Location = New-Object System.Drawing.Point(875, 15)
+$btnReset.Size = New-Object System.Drawing.Size(95, 36)
 $btnReset.BackColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
 $btnReset.ForeColor = [System.Drawing.Color]::FromArgb(248, 113, 113)
 $btnReset.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -230,7 +241,7 @@ $topPanel.Controls.Add($btnReset)
 
 $btnExport = New-Object System.Windows.Forms.Button
 $btnExport.Text = "💾 Export JSON"
-$btnExport.Location = New-Object System.Drawing.Point(975, 15)
+$btnExport.Location = New-Object System.Drawing.Point(980, 15)
 $btnExport.Size = New-Object System.Drawing.Size(110, 36)
 $btnExport.BackColor = [System.Drawing.Color]::FromArgb(16, 185, 129)
 $btnExport.ForeColor = [System.Drawing.Color]::White
@@ -739,6 +750,78 @@ $btnOpen.Add_Click({
             [System.Windows.Forms.MessageBox]::Show("Error loading image: $($_.Exception.Message)", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
         }
     }
+})
+
+$btnAuto.Add_Click({
+    if ($null -eq $global:CurrentBitmap) {
+        [System.Windows.Forms.MessageBox]::Show("Please open or load a photo first.", "No Photo", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+        return
+    }
+
+    $global:Markers.Clear()
+    $bmp = $global:CurrentBitmap
+    $stepX = [Math]::Max(1, [int]($bmp.Width / 12))
+    $stepY = [Math]::Max(1, [int]($bmp.Height / 12))
+
+    $samples = [System.Collections.ArrayList]::new()
+    for ($y = [int]($stepY / 2); $y -lt $bmp.Height; $y += $stepY) {
+        for ($x = [int]($stepX / 2); $x -lt $bmp.Width; $x += $stepX) {
+            $c = $bmp.GetPixel($x, $y)
+            $hsl = Convert-RgbToHsl $c.R $c.G $c.B
+            $xPct = [Math]::Round((($x / [double]$bmp.Width) * 100.0), 1)
+            $yPct = [Math]::Round((($y / [double]$bmp.Height) * 100.0), 1)
+            $samples.Add([PSCustomObject]@{
+                R = $c.R; G = $c.G; B = $c.B; Hsl = $hsl
+                XPct = $xPct; YPct = $yPct; PixelX = $x; PixelY = $y
+            }) | Out-Null
+        }
+    }
+
+    if ($samples.Count -eq 0) { return }
+
+    # Pick Highlights (highest Lum), Shadows (lowest Lum), Vibrant (highest Sat), and Midtones
+    $sortedLum = $samples | Sort-Object { $_.Hsl.L }
+    $sortedSat = $samples | Sort-Object { $_.Hsl.S }
+
+    $shadow = $sortedLum[0]
+    $highlight = $sortedLum[$sortedLum.Count - 1]
+    $vibrant = $sortedSat[$sortedSat.Count - 1]
+    $midIdx = [int]($samples.Count / 2)
+    $midtone = $sortedLum[$midIdx]
+
+    $selected = [System.Collections.ArrayList]::new()
+    $selected.Add(@{ Pt = $highlight; Label = "Highlight Tone" }) | Out-Null
+    $selected.Add(@{ Pt = $midtone;   Label = "Primary Midtone" }) | Out-Null
+    $selected.Add(@{ Pt = $shadow;    Label = "Deep Shadow" }) | Out-Null
+    $selected.Add(@{ Pt = $vibrant;   Label = "Vibrant Accent" }) | Out-Null
+
+    # Add 5th tone distinct from midtone
+    $distinct = $samples | Where-Object { 
+        [Math]::Abs($_.Hsl.H - $midtone.Hsl.H) -gt 45 -and
+        [Math]::Abs($_.Hsl.H - $vibrant.Hsl.H) -gt 35
+    } | Select-Object -First 1
+
+    if ($null -ne $distinct) {
+        $selected.Add(@{ Pt = $distinct; Label = "Secondary Tone" }) | Out-Null
+    }
+
+    $id = 1
+    foreach ($item in $selected) {
+        $pt = $item.Pt
+        $hex = Convert-RgbToHex $pt.R $pt.G $pt.B
+        $global:Markers.Add([PSCustomObject]@{
+            Id = $id
+            Label = $item.Label
+            R = $pt.R; G = $pt.G; B = $pt.B
+            Hex = $hex; Hsl = $pt.Hsl
+            XPct = $pt.XPct; YPct = $pt.YPct
+            PixelX = $pt.PixelX; PixelY = $pt.PixelY
+        }) | Out-Null
+        $id++
+    }
+
+    Refresh-AllUI
+    $statusLabel.Text = "Auto Extracted $($global:Markers.Count) Dominant Photo Tones (Highlights, Midtones, Shadows, Accents)!"
 })
 
 $btnExport.Add_Click({

@@ -7,6 +7,7 @@ interface ColorWheelProps {
   activeHarmonyRule: string;
   detectedHarmony: HarmonyDetectionResult;
   hoveredMarkerId: number | null;
+  selectedMarkerId?: number | null;
   onMarkerHover: (id: number | null) => void;
   onMarkerSelect?: (id: number) => void;
 }
@@ -17,10 +18,12 @@ export const ColorWheel: React.FC<ColorWheelProps> = ({
   activeHarmonyRule,
   detectedHarmony,
   hoveredMarkerId,
+  selectedMarkerId,
   onMarkerHover,
   onMarkerSelect
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const markerPositionsRef = useRef<Array<{ id: number; px: number; py: number; radius: number }>>([]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -195,7 +198,9 @@ export const ColorWheel: React.FC<ColorWheelProps> = ({
       ctx.restore();
     }
 
-    // 4. Plot Sampled Color Markers on Wheel
+    // 4. Plot Sampled Color Markers on Wheel & Record Positions for Hit Testing
+    const newPositions: Array<{ id: number; px: number; py: number; radius: number }> = [];
+
     markers.forEach((marker) => {
       const angleRad = marker.hsl.h * (Math.PI / 180);
       const distance = pureHueMode ? radius : (marker.hsl.s / 100) * radius;
@@ -204,33 +209,106 @@ export const ColorWheel: React.FC<ColorWheelProps> = ({
       const py = centerY + distance * Math.sin(angleRad);
 
       const isHovered = hoveredMarkerId === marker.id;
+      const isSelected = selectedMarkerId === marker.id;
+      const markerRadius = isSelected ? 13 : isHovered ? 12 : 9.5;
 
-      // Glow halo on hover
-      if (isHovered) {
+      newPositions.push({ id: marker.id, px, py, radius: markerRadius });
+
+      // Outer Selection Spotlight Beacon Ring (if selected from wheel or photo)
+      if (isSelected) {
+        ctx.beginPath();
+        ctx.arc(px, py, 20, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(px, py, 17, 0, Math.PI * 2);
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash([3, 2]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (isHovered) {
+        // Glow halo on hover
         ctx.beginPath();
         ctx.arc(px, py, 16, 0, Math.PI * 2);
         ctx.fillStyle = 'rgba(99, 102, 241, 0.4)';
         ctx.fill();
       }
 
-      // Outer Shadow & Fill
+      // Outer Border & Swatch Fill
       ctx.beginPath();
-      ctx.arc(px, py, isHovered ? 12 : 9, 0, Math.PI * 2);
+      ctx.arc(px, py, markerRadius, 0, Math.PI * 2);
       ctx.fillStyle = marker.hex;
       ctx.fill();
-      ctx.lineWidth = isHovered ? 3 : 2;
-      ctx.strokeStyle = isHovered ? '#ffffff' : '#000000';
+      ctx.lineWidth = isSelected ? 3 : isHovered ? 2.5 : 2;
+      ctx.strokeStyle = isSelected ? '#38bdf8' : isHovered ? '#ffffff' : '#000000';
       ctx.stroke();
 
       // Number Label inside marker
       ctx.fillStyle = marker.hsl.l > 60 ? '#000000' : '#ffffff';
-      ctx.font = 'bold 10px sans-serif';
+      ctx.font = isSelected ? 'bold 11px sans-serif' : 'bold 9.5px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(marker.id.toString(), px, py);
     });
 
-  }, [markers, pureHueMode, activeHarmonyRule, detectedHarmony, hoveredMarkerId]);
+    markerPositionsRef.current = newPositions;
+
+  }, [markers, pureHueMode, activeHarmonyRule, detectedHarmony, hoveredMarkerId, selectedMarkerId]);
+
+  // Canvas Mouse Move: Hit-test markers on the wheel
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    const hit = markerPositionsRef.current.find(m => {
+      const dx = mx - m.px;
+      const dy = my - m.py;
+      return Math.sqrt(dx * dx + dy * dy) <= 15;
+    });
+
+    if (hit) {
+      canvas.style.cursor = 'pointer';
+      if (hoveredMarkerId !== hit.id) {
+        onMarkerHover(hit.id);
+      }
+    } else {
+      canvas.style.cursor = 'default';
+      if (hoveredMarkerId !== null) {
+        onMarkerHover(null);
+      }
+    }
+  };
+
+  // Canvas Mouse Leave
+  const handleCanvasMouseLeave = () => {
+    const canvas = canvasRef.current;
+    if (canvas) canvas.style.cursor = 'default';
+    onMarkerHover(null);
+  };
+
+  // Canvas Click: Spotlight selected marker in photo
+  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    const hit = markerPositionsRef.current.find(m => {
+      const dx = mx - m.px;
+      const dy = my - m.py;
+      return Math.sqrt(dx * dx + dy * dy) <= 16;
+    });
+
+    if (hit) {
+      onMarkerSelect?.(hit.id);
+    }
+  };
 
   return (
     <div className="relative flex flex-col items-center select-none">
@@ -238,9 +316,15 @@ export const ColorWheel: React.FC<ColorWheelProps> = ({
         ref={canvasRef}
         width={310}
         height={310}
-        className="rounded-full shadow-2xl bg-slate-950 border border-slate-800"
+        onMouseMove={handleCanvasMouseMove}
+        onMouseLeave={handleCanvasMouseLeave}
+        onClick={handleCanvasClick}
+        className="rounded-full shadow-2xl bg-slate-950 border border-slate-800 transition-shadow hover:shadow-indigo-500/10"
       />
       <div className="absolute inset-0 pointer-events-none rounded-full ring-1 ring-inset ring-white/10" />
+      <span className="text-[10px] text-slate-400 mt-2 flex items-center gap-1">
+        <span>Click any number pin to spotlight it in the photo</span>
+      </span>
     </div>
   );
 };

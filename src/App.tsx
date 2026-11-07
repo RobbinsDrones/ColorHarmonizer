@@ -9,126 +9,83 @@ import {
   Terminal, Download, Copy, Check, RefreshCw, Layers, ExternalLink,
   Info, Cpu, ShieldCheck, HelpCircle
 } from 'lucide-react';
-import { ColorMarker, HarmonyRule, PresetPhoto } from './types';
+import { ColorMarker, HarmonyRule, AutoAnalysisResult, DominantColor } from './types';
 import { 
-  analyzeColorHarmony, calculateNudgeSuggestions, rgbToHex, rgbToHsl 
+  analyzeColorHarmony, calculateNudgeSuggestions, rgbToHex, rgbToHsl, extractPhotoColorsAndTones 
 } from './utils/colorUtils';
 import { PhotoSampler } from './components/PhotoSampler';
 import { ColorWheel } from './components/ColorWheel';
 import { PaletteList } from './components/PaletteList';
+import { AutoPaletteAnalyzer } from './components/AutoPaletteAnalyzer';
 import { LightroomTips } from './components/LightroomTips';
 import { PowerShellHub } from './components/PowerShellHub';
 import { ExportModal } from './components/ExportModal';
 
-// High-fidelity Preset Sample Photos
-const SAMPLE_PHOTOS: PresetPhoto[] = [
-  {
-    name: 'Sunset Dunes',
-    category: 'Landscape / Warm',
-    url: 'https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?auto=format&fit=crop&w=1400&q=80',
-    description: 'Rich warm oranges, deep gold, and cool teal sky accents.',
-    defaultPoints: [
-      { x: 30, y: 35, label: 'Sky Highlight' },
-      { x: 75, y: 45, label: 'Midtone Warmth' },
-      { x: 50, y: 75, label: 'Foreground Shadow' },
-      { x: 20, y: 65, label: 'Secondary Dune' },
-      { x: 80, y: 25, label: 'Accent Light' }
-    ]
-  },
-  {
-    name: 'Neon Cyberpunk',
-    category: 'Urban / Vibrant',
-    url: 'https://images.unsplash.com/photo-1519501025264-65ba15a82390?auto=format&fit=crop&w=1400&q=80',
-    description: 'Vibrant magenta, electric cyan, and deep urban shadows.',
-    defaultPoints: [
-      { x: 25, y: 40, label: 'Neon Magenta Sign' },
-      { x: 68, y: 30, label: 'Cyan High-Rise' },
-      { x: 45, y: 80, label: 'Wet Street Reflection' },
-      { x: 85, y: 60, label: 'Tungsten Window' }
-    ]
-  },
-  {
-    name: 'Forest Mist',
-    category: 'Nature / Moody',
-    url: 'https://images.unsplash.com/photo-1448375240586-882707db888b?auto=format&fit=crop&w=1400&q=80',
-    description: 'Moody greens, earthy moss, and subtle golden highlights.',
-    defaultPoints: [
-      { x: 35, y: 30, label: 'Mist Highlight' },
-      { x: 60, y: 55, label: 'Moss Canopy' },
-      { x: 25, y: 85, label: 'Deep Bark Shadow' },
-      { x: 75, y: 70, label: 'Undergrowth Fern' }
-    ]
-  },
-  {
-    name: 'Tokyo Twilight',
-    category: 'Night / Cinematic',
-    url: 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1400&q=80',
-    description: 'Midnight blues, warm lantern amber, and twilight gradients.',
-    defaultPoints: [
-      { x: 50, y: 20, label: 'Tower Amber Light' },
-      { x: 20, y: 35, label: 'Twilight Indigo Sky' },
-      { x: 70, y: 70, label: 'Tungsten Streetlamps' },
-      { x: 40, y: 85, label: 'Asphalt Shadow' }
-    ]
-  }
-];
+// Default High-Fidelity Photograph (Atmospheric urban night with vibrant subjects)
+const DEFAULT_PHOTO_URL = 'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?auto=format&fit=crop&w=1400&q=80';
 
 export default function App() {
   // Navigation State: 'studio' | 'powershell'
   const [appMode, setAppMode] = useState<'studio' | 'powershell'>('studio');
 
   // Photo & Color Markers State
-  const [imageSrc, setImageSrc] = useState<string>(SAMPLE_PHOTOS[0].url);
+  const [imageSrc, setImageSrc] = useState<string>(DEFAULT_PHOTO_URL);
   const [markers, setMarkers] = useState<ColorMarker[]>([]);
   const [pureHueMode, setPureHueMode] = useState<boolean>(false);
   const [targetHarmony, setTargetHarmony] = useState<HarmonyRule>('auto');
   const [hoveredMarkerId, setHoveredMarkerId] = useState<number | null>(null);
+  const [selectedMarkerId, setSelectedMarkerId] = useState<number | null>(null);
   const [rightPanelTab, setRightPanelTab] = useState<'wheel' | 'lightroom'>('wheel');
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
 
-  // Load Preset Points onto Photo
-  const loadPresetPoints = (photo: PresetPhoto) => {
+  // Auto Color Extraction State
+  const [samplingMode, setSamplingMode] = useState<'manual' | 'auto'>('manual');
+  const [autoAnalysis, setAutoAnalysis] = useState<AutoAnalysisResult | null>(null);
+  const [isAnalyzingAuto, setIsAnalyzingAuto] = useState<boolean>(false);
+  const [autoClusterCount, setAutoClusterCount] = useState<number>(6);
+
+  // Load and analyze photo using balanced dominant + visually significant extraction
+  const loadAndAnalyzePhoto = (url: string, count: number = autoClusterCount, autoPopulatePins: boolean = true) => {
+    setIsAnalyzingAuto(true);
     const img = new Image();
     img.crossOrigin = 'Anonymous';
     img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      try {
+        const autoRes = extractPhotoColorsAndTones(img, count);
+        setAutoAnalysis(autoRes);
 
-      ctx.drawImage(img, 0, 0);
-
-      const initialMarkers: ColorMarker[] = photo.defaultPoints.map((pt, idx) => {
-        const px = Math.floor((pt.x / 100) * img.width);
-        const py = Math.floor((pt.y / 100) * img.height);
-        const pixelData = ctx.getImageData(px, py, 1, 1).data;
-        const r = pixelData[0];
-        const g = pixelData[1];
-        const b = pixelData[2];
-
-        return {
-          id: idx + 1,
-          x: pt.x,
-          y: pt.y,
-          r,
-          g,
-          b,
-          hex: rgbToHex(r, g, b),
-          hsl: rgbToHsl(r, g, b),
-          label: pt.label
-        };
-      });
-
-      setMarkers(initialMarkers);
+        if (autoPopulatePins && autoRes.dominantColors.length > 0) {
+          const autoPins: ColorMarker[] = autoRes.dominantColors.map(c => ({
+            id: c.id,
+            x: c.sampleX,
+            y: c.sampleY,
+            r: c.rgb.r,
+            g: c.rgb.g,
+            b: c.rgb.b,
+            hex: c.hex,
+            hsl: c.hsl,
+            label: c.label
+          }));
+          setMarkers(autoPins);
+        }
+      } catch (err) {
+        console.error('Failed to analyze photo colors', err);
+      } finally {
+        setIsAnalyzingAuto(false);
+      }
     };
-    img.src = photo.url;
+    img.onerror = () => setIsAnalyzingAuto(false);
+    img.src = url;
   };
 
-  // Initialize Default Preset on Mount
+  // Run Auto Extraction on an image URL (when re-analyzing or changing cluster count)
+  const runAutoAnalysis = (url: string, count: number = autoClusterCount) => {
+    loadAndAnalyzePhoto(url, count, false);
+  };
+
+  // Initialize Photo on Mount
   useEffect(() => {
-    const currentPreset = SAMPLE_PHOTOS.find(p => p.url === imageSrc) || SAMPLE_PHOTOS[0];
-    loadPresetPoints(currentPreset);
+    loadAndAnalyzePhoto(imageSrc, autoClusterCount, true);
   }, []);
 
   // Handle Image Upload
@@ -138,12 +95,51 @@ export default function App() {
       const reader = new FileReader();
       reader.onload = (event) => {
         if (event.target?.result) {
-          setImageSrc(event.target.result as string);
-          setMarkers([]); // clear previous markers for user to pick
+          const newUrl = event.target.result as string;
+          setImageSrc(newUrl);
+          loadAndAnalyzePhoto(newUrl, autoClusterCount, true);
         }
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  // Apply Auto Colors as Pins on Photo & Color Wheel
+  const handleApplyAutoColorsAsPins = (colors: DominantColor[]) => {
+    const newMarkers: ColorMarker[] = colors.map((c, idx) => ({
+      id: idx + 1,
+      x: c.sampleX,
+      y: c.sampleY,
+      r: c.rgb.r,
+      g: c.rgb.g,
+      b: c.rgb.b,
+      hex: c.hex,
+      hsl: c.hsl,
+      label: `${c.toneCategory}: ${c.label}`
+    }));
+    setMarkers(newMarkers);
+    setSamplingMode('manual'); // switch to viewing the pins on the photo
+  };
+
+  // Add a single dominant color or tone as a pin
+  const handleAddSingleColorAsPin = (color: DominantColor) => {
+    if (markers.length >= 12) {
+      alert("Maximum of 12 color sample points reached. Remove one first.");
+      return;
+    }
+    const newId = markers.length > 0 ? Math.max(...markers.map(m => m.id)) + 1 : 1;
+    const newMarker: ColorMarker = {
+      id: newId,
+      x: color.sampleX,
+      y: color.sampleY,
+      r: color.rgb.r,
+      g: color.rgb.g,
+      b: color.rgb.b,
+      hex: color.hex,
+      hsl: color.hsl,
+      label: `${color.toneCategory} (${color.percentage}%)`
+    };
+    setMarkers(prev => [...prev, newMarker]);
   };
 
   // Marker Operations
@@ -161,6 +157,13 @@ export default function App() {
 
   const handleResetMarkers = () => {
     setMarkers([]);
+  };
+
+  const handleMarkerSelect = (id: number | null) => {
+    setSelectedMarkerId(id);
+    if (id !== null && samplingMode === 'auto') {
+      setSamplingMode('manual');
+    }
   };
 
   // Derived Harmony Detection
@@ -254,27 +257,6 @@ export default function App() {
             </button>
           </div>
 
-          {/* Preset Selector */}
-          <div className="hidden xl:flex items-center bg-slate-800/80 rounded-lg p-1 border border-slate-700/80">
-            <span className="text-[11px] text-slate-400 px-2 font-medium">Presets:</span>
-            {SAMPLE_PHOTOS.map((sample) => (
-              <button
-                key={sample.name}
-                onClick={() => {
-                  setImageSrc(sample.url);
-                  loadPresetPoints(sample);
-                }}
-                className={`text-xs px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  imageSrc === sample.url
-                    ? 'bg-indigo-600 text-white font-medium shadow'
-                    : 'text-slate-300 hover:bg-slate-700/60'
-                }`}
-              >
-                {sample.name}
-              </button>
-            ))}
-          </div>
-
           {/* Upload Button */}
           <label className="flex items-center space-x-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg cursor-pointer transition-all shadow-md shadow-indigo-600/25">
             <Upload className="w-3.5 h-3.5" />
@@ -305,7 +287,7 @@ export default function App() {
         {appMode === 'studio' ? (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             
-            {/* Left Column: Interactive Photo Sampler & Palette Cards (7 cols) */}
+            {/* Left Column: Interactive Photo Sampler, Auto Color Analyzer, and Palette Cards (7 cols) */}
             <div className="lg:col-span-7 flex flex-col space-y-5">
               <PhotoSampler
                 imageSrc={imageSrc}
@@ -314,15 +296,77 @@ export default function App() {
                 onRemoveMarker={handleRemoveMarker}
                 onResetMarkers={handleResetMarkers}
                 hoveredMarkerId={hoveredMarkerId}
+                selectedMarkerId={selectedMarkerId}
                 onMarkerHover={setHoveredMarkerId}
+                onSelectMarker={handleMarkerSelect}
+                samplingMode={samplingMode}
+                onSetSamplingMode={setSamplingMode}
+                onTriggerAutoExtract={() => runAutoAnalysis(imageSrc, autoClusterCount)}
+                isAnalyzingAuto={isAnalyzingAuto}
               />
+
+              {/* Auto Color Picker & Tonal Analysis Panel */}
+              {samplingMode === 'auto' ? (
+                <AutoPaletteAnalyzer
+                  analysis={autoAnalysis}
+                  isAnalyzing={isAnalyzingAuto}
+                  onApplyAutoColorsAsPins={handleApplyAutoColorsAsPins}
+                  onAddSingleColorAsPin={handleAddSingleColorAsPin}
+                  onReanalyze={(count) => {
+                    setAutoClusterCount(count);
+                    runAutoAnalysis(imageSrc, count);
+                  }}
+                  targetCount={autoClusterCount}
+                />
+              ) : (
+                /* Compact Auto Color Banner when in Manual Eyedropper mode */
+                autoAnalysis && autoAnalysis.dominantColors.length > 0 && (
+                  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 shadow-md flex items-center justify-between gap-3">
+                    <div className="flex items-center space-x-3 overflow-hidden">
+                      <div className="p-2 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20 shrink-0">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-xs font-bold text-white">Photo Dominant Palette</span>
+                          <span className="text-[10px] text-amber-300 font-medium px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/25">
+                            {autoAnalysis.temperature} Scheme
+                          </span>
+                        </div>
+                        {/* Mini preview bar */}
+                        <div className="flex items-center space-x-1.5 mt-1.5">
+                          {autoAnalysis.dominantColors.slice(0, 5).map(c => (
+                            <div 
+                              key={c.id} 
+                              style={{ backgroundColor: c.hex }} 
+                              className="w-5 h-5 rounded-md border border-white/20 shadow-xs cursor-pointer hover:scale-110 transition-transform" 
+                              title={`${c.label} (${c.hex}) - ${c.percentage}%`}
+                              onClick={() => handleAddSingleColorAsPin(c)}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setSamplingMode('auto')}
+                      className="bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700 shrink-0 flex items-center gap-1.5 transition-all cursor-pointer"
+                    >
+                      <span>View Tones & Breakdown</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )
+              )}
 
               <PaletteList
                 markers={markers}
                 onRemoveMarker={handleRemoveMarker}
                 onUpdateLabel={handleUpdateLabel}
                 hoveredMarkerId={hoveredMarkerId}
+                selectedMarkerId={selectedMarkerId}
                 onMarkerHover={setHoveredMarkerId}
+                onSelectMarker={handleMarkerSelect}
                 onOpenExportModal={() => setIsExportModalOpen(true)}
               />
 
@@ -411,7 +455,9 @@ export default function App() {
                       activeHarmonyRule={activeHarmonyRule}
                       detectedHarmony={detectedHarmony}
                       hoveredMarkerId={hoveredMarkerId}
+                      selectedMarkerId={selectedMarkerId}
                       onMarkerHover={setHoveredMarkerId}
+                      onMarkerSelect={handleMarkerSelect}
                     />
 
                     <p className="text-[11px] text-slate-400 text-center mt-3 max-w-xs">

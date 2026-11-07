@@ -57,3 +57,38 @@ export interface PresetPhoto {
   description: string;
   defaultPoints: Array<{ x: number; y: number; label: string }>;
 }
+
+export interface DominantColor {
+  id: number;
+  hex: string;
+  rgb: RgbColor;
+  hsl: HslColor;
+  percentage: number; // e.g. 38.5%
+  pixelCount: number;
+  label: string;
+  toneCategory: 'Highlight' | 'Midtone' | 'Shadow' | 'Vibrant Accent' | 'Muted Neutral';
+  sampleX: number; // estimated coordinate % on photo
+  sampleY: number; // estimated coordinate % on photo
+  significanceType?: 'Dominant Base' | 'Vibrant Accent' | 'Key Highlight' | 'Deep Shadow' | 'Harmonic Tone';
+  significanceScore?: number;
+}
+
+export interface ColorTones {
+  highlight: DominantColor | null;
+  midtone: DominantColor | null;
+  shadow: DominantColor | null;
+  vibrant: DominantColor | null;
+  muted: DominantColor | null;
+}
+
+export interface AutoAnalysisResult {
+  dominantColors: DominantColor[];
+  tones: ColorTones;
+  temperature: 'Warm' | 'Cool' | 'Balanced Neutral';
+  temperatureScore: number; // -100 (very cool) to +100 (very warm)
+  contrastLevel: 'High Dynamic Contrast' | 'Balanced Contrast' | 'Soft / Low Key';
+  contrastRatio: number;
+  saturationLevel: 'Vibrant & Punchy' | 'Natural Richness' | 'Moody & Desaturated';
+  avgSaturation: number;
+  recommendedScheme: string;
+}

@@ -7,7 +7,9 @@ interface PaletteListProps {
   onRemoveMarker: (id: number) => void;
   onUpdateLabel: (id: number, label: string) => void;
   hoveredMarkerId: number | null;
+  selectedMarkerId?: number | null;
   onMarkerHover: (id: number | null) => void;
+  onSelectMarker?: (id: number | null) => void;
   onOpenExportModal: () => void;
 }
 
@@ -16,7 +18,9 @@ export const PaletteList: React.FC<PaletteListProps> = ({
   onRemoveMarker,
   onUpdateLabel,
   hoveredMarkerId,
+  selectedMarkerId,
   onMarkerHover,
+  onSelectMarker,
   onOpenExportModal
 }) => {
   const [copiedId, setCopiedId] = useState<string | number | null>(null);
@@ -66,39 +70,52 @@ export const PaletteList: React.FC<PaletteListProps> = ({
         </p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[230px] overflow-y-auto pr-1">
-          {markers.map((marker) => (
-            <div
-              key={marker.id}
-              onMouseEnter={() => onMarkerHover(marker.id)}
-              onMouseLeave={() => onMarkerHover(null)}
-              className={`flex items-center space-x-3 p-2.5 rounded-xl border transition-all ${
-                hoveredMarkerId === marker.id
-                  ? 'bg-slate-800 border-indigo-500/80 shadow-lg'
-                  : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              {/* Color Swatch Circle */}
+          {markers.map((marker) => {
+            const isHovered = hoveredMarkerId === marker.id;
+            const isSelected = selectedMarkerId === marker.id;
+
+            return (
               <div
-                style={{ backgroundColor: marker.hex }}
-                className="w-9 h-9 rounded-lg border border-white/20 shadow-inner flex items-center justify-center shrink-0 font-bold text-xs"
+                key={marker.id}
+                onMouseEnter={() => onMarkerHover(marker.id)}
+                onMouseLeave={() => onMarkerHover(null)}
+                onClick={() => onSelectMarker?.(isSelected ? null : marker.id)}
+                className={`flex items-center space-x-3 p-2.5 rounded-xl border transition-all cursor-pointer ${
+                  isSelected
+                    ? 'bg-slate-800 border-cyan-400 ring-1 ring-cyan-400/60 shadow-lg shadow-cyan-500/10'
+                    : isHovered
+                    ? 'bg-slate-800 border-indigo-500/80 shadow-md'
+                    : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
+                }`}
               >
-                <span className={marker.hsl.l > 60 ? 'text-black/80' : 'text-white/90'}>
-                  {marker.id}
-                </span>
-              </div>
+                {/* Color Swatch Circle */}
+                <div
+                  style={{ backgroundColor: marker.hex }}
+                  className={`w-9 h-9 rounded-lg border shadow-inner flex items-center justify-center shrink-0 font-bold text-xs transition-all ${
+                    isSelected ? 'border-cyan-300 ring-2 ring-cyan-400' : 'border-white/20'
+                  }`}
+                >
+                  <span className={marker.hsl.l > 60 ? 'text-black/80' : 'text-white/90'}>
+                    {marker.id}
+                  </span>
+                </div>
 
               {/* Color Metadata */}
               <div className="flex-1 min-w-0">
                 <input
                   type="text"
                   value={marker.label}
+                  onClick={(e) => e.stopPropagation()}
                   onChange={(e) => onUpdateLabel(marker.id, e.target.value)}
                   className="bg-transparent text-xs font-semibold text-slate-200 focus:outline-none focus:border-b border-indigo-400 w-full truncate"
                   placeholder="Sample name..."
                 />
                 <div className="flex items-center space-x-2 text-[11px] font-mono text-slate-400 mt-0.5">
                   <button
-                    onClick={() => copyToClipboard(marker.hex, `hex-${marker.id}`)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyToClipboard(marker.hex, `hex-${marker.id}`);
+                    }}
                     className="hover:text-indigo-300 flex items-center gap-0.5 uppercase cursor-pointer"
                     title="Copy HEX"
                   >
@@ -116,14 +133,18 @@ export const PaletteList: React.FC<PaletteListProps> = ({
 
               {/* Delete Button */}
               <button
-                onClick={() => onRemoveMarker(marker.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRemoveMarker(marker.id);
+                }}
                 className="text-slate-500 hover:text-rose-400 p-1 rounded-md transition-colors cursor-pointer"
                 title="Remove sample"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
-          ))}
+          );
+        })}
         </div>
       )}
     </div>

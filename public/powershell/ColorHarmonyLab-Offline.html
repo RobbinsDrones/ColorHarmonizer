@@ -181,6 +181,7 @@
         📂 Upload Photo
         <input type="file" id="fileInput" accept="image/*" style="display:none">
       </label>
+      <button id="btnAutoExtract" style="background:#d97706; border-color:#d97706;">✨ Auto Extract</button>
       <button id="btnSampleSunset">Preset: Sunset</button>
       <button id="btnSampleCyber">Preset: Cyberpunk</button>
       <button id="btnReset">Reset Pins</button>
@@ -526,6 +527,61 @@
         reader.onload = ev => loadImage(ev.target.result);
         reader.readAsDataURL(file);
       }
+    });
+
+    // Auto Extract Dominant Colors & Tones
+    document.getElementById('btnAutoExtract').addEventListener('click', () => {
+      if (!currentImage || !photoCanvas.width) return;
+      const w = photoCanvas.width;
+      const h = photoCanvas.height;
+      const stepX = Math.max(1, Math.floor(w / 12));
+      const stepY = Math.max(1, Math.floor(h / 12));
+      const samples = [];
+
+      for (let y = Math.floor(stepY / 2); y < h; y += stepY) {
+        for (let x = Math.floor(stepX / 2); x < w; x += stepX) {
+          const pixel = photoCtx.getImageData(x, y, 1, 1).data;
+          const r = pixel[0], g = pixel[1], b = pixel[2];
+          const hsl = rgbToHsl(r, g, b);
+          const xPct = Number(((x / w) * 100).toFixed(1));
+          const yPct = Number(((y / h) * 100).toFixed(1));
+          samples.push({ r, g, b, hsl, xPct, yPct });
+        }
+      }
+
+      if (samples.length === 0) return;
+
+      // Pick tones
+      const sortedLum = [...samples].sort((a,b) => a.hsl.l - b.hsl.l);
+      const sortedSat = [...samples].sort((a,b) => a.hsl.s - b.hsl.s);
+
+      const shadow = sortedLum[0];
+      const highlight = sortedLum[sortedLum.length - 1];
+      const vibrant = sortedSat[sortedSat.length - 1];
+      const midtone = sortedLum[Math.floor(samples.length / 2)];
+      const distinct = samples.find(s => Math.abs(s.hsl.h - midtone.hsl.h) > 45 && Math.abs(s.hsl.h - vibrant.hsl.h) > 30) || samples[0];
+
+      const autoTones = [
+        { pt: highlight, label: 'Highlight Tone' },
+        { pt: midtone, label: 'Primary Midtone' },
+        { pt: shadow, label: 'Deep Shadow' },
+        { pt: vibrant, label: 'Vibrant Accent' },
+        { pt: distinct, label: 'Secondary Tone' }
+      ];
+
+      markers = autoTones.map((item, idx) => ({
+        id: idx + 1,
+        label: item.label,
+        xPct: item.pt.xPct,
+        yPct: item.pt.yPct,
+        r: item.pt.r,
+        g: item.pt.g,
+        b: item.pt.b,
+        hex: rgbToHex(item.pt.r, item.pt.g, item.pt.b),
+        hsl: item.pt.hsl
+      }));
+
+      renderPins();
     });
 
     document.getElementById('btnReset').addEventListener('click', () => {

@@ -13,7 +13,13 @@ interface PhotoSamplerProps {
   onRemoveMarker: (id: number) => void;
   onResetMarkers: () => void;
   hoveredMarkerId: number | null;
+  selectedMarkerId?: number | null;
   onMarkerHover: (id: number | null) => void;
+  onSelectMarker?: (id: number | null) => void;
+  samplingMode: 'manual' | 'auto';
+  onSetSamplingMode: (mode: 'manual' | 'auto') => void;
+  onTriggerAutoExtract: () => void;
+  isAnalyzingAuto: boolean;
 }
 
 export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
@@ -23,7 +29,13 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
   onRemoveMarker,
   onResetMarkers,
   hoveredMarkerId,
-  onMarkerHover
+  selectedMarkerId,
+  onMarkerHover,
+  onSelectMarker,
+  samplingMode,
+  onSetSamplingMode,
+  onTriggerAutoExtract,
+  isAnalyzingAuto
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -55,6 +67,12 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
 
   // Handle Photo Mouse Move (Update Loupe Eyedropper)
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    // If hovering over or selecting an existing marker pin, suppress the eyedropper loupe
+    if (hoveredMarkerId !== null || selectedMarkerId !== null) {
+      setLoupe(prev => ({ ...prev, visible: false }));
+      return;
+    }
+
     const img = imageRef.current;
     if (!img) return;
 
@@ -71,6 +89,18 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
 
     const xPct = ((e.clientX - rect.left) / rect.width) * 100;
     const yPct = ((e.clientY - rect.top) / rect.height) * 100;
+
+    // Check if close to any existing marker to avoid accidental overlap
+    const nearMarker = markers.some(m => {
+      const dx = Math.abs(m.x - xPct);
+      const dy = Math.abs(m.y - yPct);
+      return dx < 3.5 && dy < 3.5;
+    });
+
+    if (nearMarker) {
+      setLoupe(prev => ({ ...prev, visible: false }));
+      return;
+    }
 
     // Read pixel from hidden offscreen canvas
     try {
@@ -163,14 +193,49 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col flex-1">
-      {/* Header with Title and Zoom Controls */}
-      <div className="flex justify-between items-center mb-3">
+      {/* Header with Title, Mode Switcher, and Controls */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center space-x-2">
-          <Crosshair className="w-4 h-4 text-indigo-400" />
-          <h2 className="text-sm font-semibold text-slate-200">Interactive Photo Eyedropper</h2>
+          {/* Sampling Mode Switcher Tabs */}
+          <div className="flex items-center bg-slate-950 p-0.5 rounded-xl border border-slate-800 text-xs">
+            <button
+              onClick={() => onSetSamplingMode('manual')}
+              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                samplingMode === 'manual'
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Crosshair className="w-3.5 h-3.5" />
+              <span>Manual Eyedropper</span>
+            </button>
+
+            <button
+              onClick={() => onSetSamplingMode('auto')}
+              className={`px-3 py-1.5 rounded-lg font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                samplingMode === 'auto'
+                  ? 'bg-amber-600 text-white shadow'
+                  : 'text-slate-400 hover:text-amber-300'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Auto Color Picker</span>
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center space-x-2">
+          {/* Quick Auto Extract Palette Trigger */}
+          <button
+            onClick={onTriggerAutoExtract}
+            disabled={isAnalyzingAuto}
+            className="bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+            title="Scan photo pixels and auto-extract dominant palette"
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${isAnalyzingAuto ? 'animate-spin' : ''}`} />
+            <span>{isAnalyzingAuto ? 'Analyzing...' : 'Auto Extract'}</span>
+          </button>
+
           {/* Zoom controls */}
           <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg p-0.5 text-xs text-slate-400">
             <button
@@ -204,7 +269,7 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
           </div>
 
           <div className="text-xs text-slate-400 bg-slate-800 px-2.5 py-1 rounded-full border border-slate-700">
-            Sampled: <span className="text-indigo-400 font-semibold">{markers.length}</span>/12
+            Pins: <span className="text-indigo-400 font-semibold">{markers.length}</span>/12
           </div>
         </div>
       </div>
@@ -230,47 +295,96 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
           />
 
           {/* Positioned Pins on Photo */}
-          {markers.map((marker) => (
-            <div
-              key={marker.id}
-              style={{ left: `${marker.x}%`, top: `${marker.y}%` }}
-              onMouseEnter={() => onMarkerHover(marker.id)}
-              onMouseLeave={() => onMarkerHover(null)}
-              onClick={(e) => {
-                e.stopPropagation(); // prevent adding duplicate point
-              }}
-              className={`absolute -translate-x-1/2 -translate-y-1/2 group/marker z-20 cursor-pointer transition-transform ${
-                hoveredMarkerId === marker.id ? 'scale-125 z-30' : 'scale-100 hover:scale-110'
-              }`}
-            >
-              {/* Outer Pulse Glow */}
-              <span className="absolute -inset-1 rounded-full animate-ping opacity-35 bg-white pointer-events-none" />
+          {markers.map((marker) => {
+            const isHovered = hoveredMarkerId === marker.id;
+            const isSelected = selectedMarkerId === marker.id;
 
-              {/* Pin Badge Circle */}
+            return (
               <div
-                style={{ backgroundColor: marker.hex }}
-                className={`w-7 h-7 rounded-full border-2 flex items-center justify-center shadow-xl font-bold text-xs ${
-                  marker.hsl.l > 60 ? 'text-black border-black/50' : 'text-white border-white/70'
+                key={marker.id}
+                style={{ left: `${marker.x}%`, top: `${marker.y}%` }}
+                onMouseEnter={() => {
+                  onMarkerHover(marker.id);
+                  setLoupe(prev => ({ ...prev, visible: false }));
+                }}
+                onMouseLeave={() => {
+                  onMarkerHover(null);
+                }}
+                onClick={(e) => {
+                  e.stopPropagation(); // prevent adding duplicate point
+                  onSelectMarker?.(isSelected ? null : marker.id);
+                }}
+                className={`absolute -translate-x-1/2 -translate-y-1/2 group/marker z-20 cursor-pointer transition-transform ${
+                  isSelected 
+                    ? 'scale-125 z-40' 
+                    : isHovered 
+                    ? 'scale-120 z-30' 
+                    : 'scale-100 hover:scale-110'
                 }`}
               >
-                {marker.id}
-              </div>
+                {/* Outer Pulse Glow Beacon for selected pin */}
+                {isSelected ? (
+                  <>
+                    <span className="absolute -inset-2.5 rounded-full animate-ping opacity-60 bg-cyan-400 pointer-events-none" />
+                    <span className="absolute -inset-1 rounded-full ring-2 ring-cyan-400 ring-offset-2 ring-offset-slate-950 pointer-events-none" />
+                  </>
+                ) : (
+                  <span className="absolute -inset-1 rounded-full animate-ping opacity-25 bg-white pointer-events-none" />
+                )}
 
-              {/* Hover Badge Tooltip */}
-              <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover/marker:flex flex-col items-center pointer-events-none z-40">
-                <div className="bg-slate-900/95 border border-slate-700 text-slate-100 text-[11px] px-2.5 py-1.5 rounded-lg shadow-2xl whitespace-nowrap flex flex-col items-center gap-0.5 backdrop-blur">
-                  <span className="font-semibold text-indigo-300">{marker.label}</span>
-                  <span className="text-slate-400 uppercase font-mono text-[10px]">{marker.hex}</span>
-                  <span className="text-slate-500 text-[9px]">H:{marker.hsl.h}° S:{marker.hsl.s}% L:{marker.hsl.l}%</span>
+                {/* Pin Badge Circle */}
+                <div
+                  style={{ backgroundColor: marker.hex }}
+                  className={`w-7 h-7 rounded-full border-2 flex items-center justify-center shadow-2xl font-bold text-xs transition-all ${
+                    isSelected
+                      ? 'border-cyan-300 ring-2 ring-cyan-400 shadow-cyan-500/50'
+                      : marker.hsl.l > 60 
+                      ? 'text-black border-black/50' 
+                      : 'text-white border-white/70'
+                  }`}
+                >
+                  <span className={isSelected ? (marker.hsl.l > 60 ? 'text-black font-extrabold' : 'text-white font-extrabold') : (marker.hsl.l > 60 ? 'text-black' : 'text-white')}>
+                    {marker.id}
+                  </span>
                 </div>
-                <div className="w-2 h-2 bg-slate-900 rotate-45 -mt-1 border-r border-b border-slate-700" />
+
+                {/* Unified Hover / Selection Tooltip (Shown on hover or when spotlighted from color wheel) */}
+                {(isHovered || isSelected) && (
+                  <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 flex flex-col items-center pointer-events-none z-50 animate-in fade-in zoom-in-95 duration-100">
+                    <div className="bg-slate-900/98 border border-slate-700 text-slate-100 px-3 py-2 rounded-xl shadow-2xl whitespace-nowrap flex items-center gap-2.5 backdrop-blur-md">
+                      <div
+                        style={{ backgroundColor: marker.hex }}
+                        className="w-5 h-5 rounded-md border border-white/30 shrink-0 shadow-inner"
+                      />
+                      <div className="flex flex-col text-left">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-[11px] text-cyan-300">#{marker.id}</span>
+                          <span className="font-semibold text-slate-200 text-[11px]">{marker.label}</span>
+                          {isSelected && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                              Spotlight
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center space-x-2 text-[10px] font-mono text-slate-400 mt-0.5">
+                          <span className="uppercase font-bold text-slate-200">{marker.hex}</span>
+                          <span>•</span>
+                          <span>R:{marker.r} G:{marker.g} B:{marker.b}</span>
+                          <span>•</span>
+                          <span>H:{marker.hsl.h}° S:{marker.hsl.s}% L:{marker.hsl.l}%</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="w-2.5 h-2.5 bg-slate-900 rotate-45 -mt-1 border-r border-b border-slate-700" />
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        {/* Real-time Magnifying Loupe / Eyedropper Preview */}
-        {loupe.visible && (
+        {/* Real-time Magnifying Loupe / Eyedropper Preview (Only when NOT hovering over an existing pin) */}
+        {loupe.visible && hoveredMarkerId === null && selectedMarkerId === null && (
           <div
             className="absolute pointer-events-none z-50 -translate-x-1/2 -translate-y-[120%] flex flex-col items-center transition-all duration-75"
             style={{ left: `${loupe.x}px`, top: `${loupe.y}px` }}

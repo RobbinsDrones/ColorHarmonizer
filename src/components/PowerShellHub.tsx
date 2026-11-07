@@ -368,7 +368,7 @@ Invoke-PS2EXE \`
                   selectedScript === 'custom' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Current Sampled Preset ({markers.length} Pins)
+                Current Sampled Palette ({markers.length} Pins)
               </button>
             </div>
 
@@ -379,7 +379,7 @@ Invoke-PS2EXE \`
                   className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 cursor-pointer font-medium"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  <span>Download Custom Preset (.ps1)</span>
+                  <span>Download Custom Palette (.ps1)</span>
                 </button>
               ) : (
                 <button
