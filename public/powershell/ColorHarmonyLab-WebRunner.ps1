@@ -23,12 +23,12 @@ $hostUrl = "http://localhost:$Port/"
 
 Write-Host @"
 ========================================================================
-   🎨 Photo Color Analysis & Harmony Lab - Local Desktop Host
+   [+] Photo Color Analysis & Harmony Lab - Local Desktop Host
    PowerShell / pwsh Local Host Engine
 ========================================================================
-   • Listening on: $hostUrl
-   • Cross-Platform: Windows, macOS, Linux pwsh
-   • Press Ctrl+C in this terminal window to stop the server
+   - Listening on: $hostUrl
+   - Cross-Platform: Windows, macOS, Linux pwsh
+   - Press Ctrl+C in this terminal window to stop the server
 ========================================================================
 "@ -ForegroundColor Cyan
 

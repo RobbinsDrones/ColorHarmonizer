@@ -24,7 +24,7 @@ $ErrorActionPreference = "Stop"
 
 Write-Host @"
 ========================================================================
-   🚀 Photo Color Analysis Lab - PowerShell to EXE Compiler
+   [+] Photo Color Analysis Lab - PowerShell to EXE Compiler
 ========================================================================
 "@ -ForegroundColor Cyan
 
@@ -53,10 +53,9 @@ if (-not (Get-Module -ListAvailable -Name ps2exe)) {
 
 # 3. Locate Source Script
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$sourceScript = if ($Target -eq "GUI") {
-    Join-Path $scriptDir "ColorHarmonyLab-GUI.ps1"
-} else {
-    Join-Path $scriptDir "ColorHarmonyLab-WebRunner.ps1"
+$sourceScript = Join-Path $scriptDir "ColorHarmonyLab-GUI.ps1"
+if ($Target -ne "GUI") {
+    $sourceScript = Join-Path $scriptDir "ColorHarmonyLab-WebRunner.ps1"
 }
 
 if (-not (Test-Path $sourceScript)) {
@@ -102,7 +101,7 @@ try {
         Write-Host @"
 ========================================================================
    SUCCESS! Standalone Executable Created:
-   📁 $outputExe ($sizeMB MB)
+   Binary: $outputExe ($sizeMB MB)
 ========================================================================
    You can now double-click '$OutputFile' to launch the app!
    No PowerShell prompt required.

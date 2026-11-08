@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
+import JSZip from 'jszip';
 import { ColorMarker } from '../types';
 import { generateCustomPowerShellScript } from '../utils/colorUtils';
 import { 
   Terminal, Download, Copy, Check, Play, FileCode, Cpu, 
   HelpCircle, ExternalLink, ShieldCheck, Sparkles, FolderDown,
-  Layers, Monitor, Laptop, Globe, CheckCircle2, ChevronRight
+  Layers, Monitor, Laptop, Globe, CheckCircle2, ChevronRight,
+  AlertTriangle, Loader2, Archive
 } from 'lucide-react';
 
 interface PowerShellHubProps {
@@ -15,6 +17,7 @@ export const PowerShellHub: React.FC<PowerShellHubProps> = ({ markers }) => {
   const [activeTab, setActiveTab] = useState<'guide' | 'scripts' | 'simulator' | 'comparison'>('guide');
   const [selectedScript, setSelectedScript] = useState<'gui' | 'webrunner' | 'builder' | 'custom'>('gui');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [isZipping, setIsZipping] = useState<boolean>(false);
 
   // Terminal simulator state
   const [simLog, setSimLog] = useState<string[]>([
@@ -36,6 +39,86 @@ export const PowerShellHub: React.FC<PowerShellHubProps> = ({ markers }) => {
     document.body.appendChild(a);
     a.click();
     a.remove();
+  };
+
+  const handleDownloadZipBundle = async () => {
+    try {
+      setIsZipping(true);
+      const zip = new JSZip();
+      
+      const filesToInclude = [
+        { name: 'ColorHarmonyLab-GUI.ps1', url: '/powershell/ColorHarmonyLab-GUI.ps1' },
+        { name: 'Build-Exe.ps1', url: '/powershell/Build-Exe.ps1' },
+        { name: 'run.sh', url: '/powershell/run.sh' },
+        { name: 'RUN_APP.bat', url: '/powershell/RUN_APP.bat' },
+        { name: 'build-exe.sh', url: '/powershell/build-exe.sh' },
+        { name: 'BUILD_EXE.bat', url: '/powershell/BUILD_EXE.bat' },
+        { name: 'ColorHarmonyLab-WebRunner.ps1', url: '/powershell/ColorHarmonyLab-WebRunner.ps1' },
+        { name: 'ColorHarmonyLab-Offline.html', url: '/powershell/ColorHarmonyLab-Offline.html' },
+        { name: 'RUN_OFFLINE_HTML.bat', url: '/powershell/RUN_OFFLINE_HTML.bat' },
+      ];
+
+      for (const f of filesToInclude) {
+        try {
+          const res = await fetch(f.url);
+          if (res.ok) {
+            const blob = await res.blob();
+            zip.file(f.name, blob);
+          }
+        } catch (e) {
+          console.warn(`Could not add ${f.name} to zip:`, e);
+        }
+      }
+
+      // Add README.txt with quickstart guide
+      const readme = `========================================================================
+Photo Color Analysis & Harmony Lab - Native PowerShell & EXE Suite
+========================================================================
+
+QUICK LAUNCH OPTIONS:
+1. Windows Explorer (No Terminal):
+   Double-click 'RUN_APP.bat' to launch the desktop application directly.
+
+2. Native Windows PowerShell / pwsh:
+   Open terminal in this directory and run:
+   .\\ColorHarmonyLab-GUI.ps1
+
+3. MSYS2 / Git Bash / UCRT64:
+   Run either:
+   ./run.sh
+   or:
+   powershell.exe -ExecutionPolicy Bypass -File ./ColorHarmonyLab-GUI.ps1
+
+4. Compile into Standalone Windows .EXE:
+   - Double-click 'BUILD_EXE.bat', or
+   - In PowerShell: .\\Build-Exe.ps1 -Target GUI -OutputFile "ColorHarmonyLab.exe"
+   - In MSYS2/Git Bash: ./build-exe.sh
+
+========================================================================
+FIX NOTES:
+- Resolved 'op_Modulus' method invocation on Object[] array.
+- Replaced PathGradientBrush.SurroundingColors with high-performance GDI+
+  wedge-gradient rendering compatible with all PowerShell versions.
+- Added interactive pin selection: click on color wheel pins to highlight
+  them on the photo and in the palette list.
+========================================================================
+`;
+      zip.file('README.txt', readme);
+
+      const content = await zip.generateAsync({ type: 'blob' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(content);
+      a.download = 'ColorHarmonyLab-PowerShell-Suite.zip';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      console.error('Failed to create ZIP bundle:', err);
+      // Fallback: download GUI script directly
+      handleDownloadFile('ColorHarmonyLab-GUI.ps1', '/powershell/ColorHarmonyLab-GUI.ps1');
+    } finally {
+      setIsZipping(false);
+    }
   };
 
   const handleDownloadCustomPs1 = () => {
@@ -103,6 +186,44 @@ export const PowerShellHub: React.FC<PowerShellHubProps> = ({ markers }) => {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl flex flex-col space-y-6">
       
+      {/* Update Notice Banner for Line 144 & Line 446 Fix */}
+      <div className="bg-gradient-to-r from-emerald-950/60 via-slate-900 to-indigo-950/60 border border-emerald-500/40 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-lg">
+        <div className="flex items-start space-x-3">
+          <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg shrink-0 mt-0.5 border border-emerald-500/30">
+            <CheckCircle2 className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center space-x-2">
+              <span className="font-bold text-white text-sm">PowerShell Script Updated & Errors Resolved</span>
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-mono border border-emerald-500/30">
+                v2.1 Fix
+              </span>
+            </div>
+            <p className="text-slate-300 mt-1 leading-relaxed">
+              If your previous run had errors on line 144 (<code className="text-amber-300">op_Modulus</code>) or line 446 (<code className="text-amber-300">SurroundingColors</code>), replace your local <code className="text-indigo-300 font-mono">ColorHarmonyLab-GUI.ps1</code> with the fixed version below.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center space-x-2 shrink-0">
+          <button
+            onClick={handleDownloadZipBundle}
+            disabled={isZipping}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3.5 py-2 rounded-lg transition-all shadow-md flex items-center gap-1.5 cursor-pointer text-xs disabled:opacity-50"
+          >
+            {isZipping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />}
+            <span>{isZipping ? 'Zipping...' : 'Download Suite (.ZIP)'}</span>
+          </button>
+          <button
+            onClick={() => handleDownloadFile('ColorHarmonyLab-GUI.ps1', '/powershell/ColorHarmonyLab-GUI.ps1')}
+            className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer text-xs"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Save .ps1 Only</span>
+          </button>
+        </div>
+      </div>
+
       {/* Top Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div className="flex items-center space-x-3">
@@ -125,21 +246,57 @@ export const PowerShellHub: React.FC<PowerShellHubProps> = ({ markers }) => {
         </div>
 
         {/* Quick Download All Files */}
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={handleDownloadZipBundle}
+            disabled={isZipping}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition-all shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            title="Download complete zip package of all scripts, launchers, and compiler"
+          >
+            {isZipping ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Archive className="w-3.5 h-3.5" />}
+            <span>All Tools (.ZIP)</span>
+          </button>
+
           <button
             onClick={() => handleDownloadFile('ColorHarmonyLab-GUI.ps1', '/powershell/ColorHarmonyLab-GUI.ps1')}
-            className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+            className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>Download GUI .ps1</span>
+            <span>ColorHarmonyLab-GUI.ps1</span>
           </button>
 
           <button
             onClick={() => handleDownloadFile('Build-Exe.ps1', '/powershell/Build-Exe.ps1')}
-            className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3.5 py-2 rounded-lg border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
+            className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-3 py-2 rounded-lg border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Build-Exe.ps1</span>
+          </button>
+          <button
+            onClick={() => handleDownloadFile('run.sh', '/powershell/run.sh')}
+            className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-2.5 py-2 rounded-lg border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Download bash launcher script for Git Bash / MSYS2"
+          >
+            <Download className="w-3.5 h-3.5 text-cyan-400" />
+            <span>run.sh</span>
+          </button>
+
+          <button
+            onClick={() => handleDownloadFile('ColorHarmonyLab-Offline.html', '/powershell/ColorHarmonyLab-Offline.html')}
+            className="bg-amber-600/90 hover:bg-amber-600 text-white text-xs font-semibold px-2.5 py-2 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-md"
+            title="Download offline single-file HTML version"
+          >
+            <Globe className="w-3.5 h-3.5 text-amber-200" />
+            <span>Offline .html</span>
+          </button>
+
+          <button
+            onClick={() => handleDownloadFile('RUN_APP.bat', '/powershell/RUN_APP.bat')}
+            className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold px-2.5 py-2 rounded-lg border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Download Windows double-click launcher batch file"
+          >
+            <Download className="w-3.5 h-3.5 text-amber-400" />
+            <span>RUN_APP.bat</span>
           </button>
         </div>
       </div>
@@ -198,6 +355,30 @@ export const PowerShellHub: React.FC<PowerShellHubProps> = ({ markers }) => {
       {/* Tab 1: Step-by-Step EXE Compilation Guide */}
       {activeTab === 'guide' && (
         <div className="space-y-6">
+          {/* MSYS2 / Git Bash Callout Box */}
+          <div className="bg-amber-950/30 border border-amber-500/30 rounded-xl p-4 flex flex-col space-y-2 text-xs">
+            <div className="flex items-center space-x-2">
+              <span className="font-bold text-amber-300">Running from MSYS2 (UCRT64/MINGW64) or Git Bash?</span>
+              <span className="text-[10px] bg-amber-500/20 text-amber-200 px-2 py-0.5 rounded-full font-mono">Bash Shell Fix</span>
+            </div>
+            <p className="text-slate-300 leading-relaxed">
+              In a bash terminal, running <code className="text-rose-300">./ColorHarmonyLab-GUI.ps1</code> causes a syntax error (<code className="text-rose-300">&lt;#: syntax error near unexpected token 'newline'</code>) because bash attempts to interpret PowerShell as a Linux shell script.
+            </p>
+            <div className="font-mono text-cyan-300 bg-slate-950 px-3 py-2 rounded-lg border border-slate-800 flex items-center justify-between gap-2">
+              <span>powershell.exe -ExecutionPolicy Bypass -File ./ColorHarmonyLab-GUI.ps1</span>
+              <button
+                onClick={() => copyToClipboard('powershell.exe -ExecutionPolicy Bypass -File ./ColorHarmonyLab-GUI.ps1', 'bash-cmd')}
+                className="text-slate-400 hover:text-white cursor-pointer shrink-0"
+                title="Copy command"
+              >
+                {copiedId === 'bash-cmd' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Or simply execute the launcher script: <code className="text-indigo-300 font-mono">./run.sh</code>, or double-click <code className="text-indigo-300 font-mono">RUN_APP.bat</code>.
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             
             {/* Card 1 */}

@@ -13,7 +13,7 @@
         Invoke-PS2EXE .\ColorHarmonyLab-GUI.ps1 .\ColorHarmonyLab.exe -noConsole -title "Color Harmony Lab"
 .NOTES
     Compatible with: Windows PowerShell 5.1, PowerShell 7+ on Windows
-    Framework: .NET WinForms & GDI+ Drawing
+    Framework: .NET WinForms & DataGridView Dark Mode (100% ASCII safe encoding)
 #>
 
 # Ensure WinForms and Drawing are loaded
@@ -26,12 +26,14 @@ Add-Type -AssemblyName System.Drawing
 $global:CurrentBitmap = $null
 $global:DisplayImage = $null
 $global:Markers = [System.Collections.ArrayList]::new()
+$global:SelectedMarkerId = $null
 $global:PureHueMode = $false
 $global:TargetHarmony = "Auto"
 $global:DetectedHarmony = "None"
 $global:PrimaryHue = 0
 
-# Helper Functions: Color Conversions
+# ==================== HELPER FUNCTIONS: COLOR MATH & GEOMETRY ====================
+
 function Convert-RgbToHex([int]$r, [int]$g, [int]$b) {
     return "#{0:X2}{1:X2}{2:X2}" -f $r, $g, $b
 }
@@ -52,10 +54,16 @@ function Convert-RgbToHsl([int]$r, [int]$g, [int]$b) {
         $s = 0.0
     } else {
         $d = $max - $min
-        $s = if ($l -gt 0.5) { $d / (2.0 - $max - $min) } else { $d / ($max + $min) }
+        if ($l -gt 0.5) {
+            $s = $d / (2.0 - $max - $min)
+        } else {
+            $s = $d / ($max + $min)
+        }
         
         if ($max -eq $rf) {
-            $h = (($gf - $bf) / $d) + (if ($gf -lt $bf) { 6.0 } else { 0.0 })
+            $offset = 0.0
+            if ($gf -lt $bf) { $offset = 6.0 }
+            $h = (($gf - $bf) / $d) + $offset
         } elseif ($max -eq $gf) {
             $h = (($bf - $rf) / $d) + 2.0
         } else {
@@ -64,11 +72,60 @@ function Convert-RgbToHsl([int]$r, [int]$g, [int]$b) {
         $h /= 6.0
     }
 
+    $hDeg = [int][Math]::Round($h * 360)
+    if ($hDeg -lt 0) { $hDeg += 360 }
+    if ($hDeg -ge 360) { $hDeg = $hDeg % 360 }
+
     return [PSCustomObject]@{
-        H = [int][Math]::Round($h * 360)
-        S = [int][Math]::Round($s * 100)
-        L = [int][Math]::Round($l * 100)
+        H = $hDeg
+        S = [int][Math]::Round([Math]::Max(0.0, [Math]::Min(100.0, $s * 100)))
+        L = [int][Math]::Round([Math]::Max(0.0, [Math]::Min(100.0, $l * 100)))
     }
+}
+
+function ColorFromHSL([double]$h, [double]$s, [double]$l) {
+    $c = (1.0 - [Math]::Abs(2.0 * $l - 1.0)) * $s
+    $hp = $h / 60.0
+    $x = $c * (1.0 - [Math]::Abs(($hp % 2.0) - 1.0))
+    $m = $l - $c / 2.0
+
+    $r1 = 0; $g1 = 0; $b1 = 0
+    if ($hp -lt 1) { $r1 = $c; $g1 = $x }
+    elseif ($hp -lt 2) { $r1 = $x; $g1 = $c }
+    elseif ($hp -lt 3) { $g1 = $c; $b1 = $x }
+    elseif ($hp -lt 4) { $g1 = $x; $b1 = $c }
+    elseif ($hp -lt 5) { $r1 = $x; $b1 = $c }
+    else { $r1 = $c; $b1 = $x }
+
+    $r = [int][Math]::Round(($r1 + $m) * 255)
+    $g = [int][Math]::Round(($g1 + $m) * 255)
+    $b = [int][Math]::Round(($b1 + $m) * 255)
+    $r = [Math]::Max(0, [Math]::Min(255, $r))
+    $g = [Math]::Max(0, [Math]::Min(255, $g))
+    $b = [Math]::Max(0, [Math]::Min(255, $b))
+    return [System.Drawing.Color]::FromArgb($r, $g, $b)
+}
+
+function Get-ImageDisplayRect($pb, $bmp) {
+    if ($pb.Width -eq 0 -or $pb.Height -eq 0 -or $bmp.Width -eq 0 -or $bmp.Height -eq 0) {
+        return New-Object System.Drawing.Rectangle(0,0,0,0)
+    }
+    $aspectPB = $pb.Width / $pb.Height
+    $aspectImg = $bmp.Width / $bmp.Height
+
+    $rw = 0; $rh = 0; $rx = 0; $ry = 0
+    if ($aspectImg -gt $aspectPB) {
+        $rw = $pb.Width
+        $rh = [int]($pb.Width / $aspectImg)
+        $rx = 0
+        $ry = [int](($pb.Height - $rh) / 2)
+    } else {
+        $rh = $pb.Height
+        $rw = [int]($pb.Height * $aspectImg)
+        $rx = [int](($pb.Width - $rw) / 2)
+        $ry = 0
+    }
+    return New-Object System.Drawing.Rectangle($rx, $ry, $rw, $rh)
 }
 
 function Get-AngleDiff([int]$a, [int]$b) {
@@ -129,19 +186,29 @@ function Calculate-Harmony {
 
 function Get-NudgeShift([int]$currentHue) {
     $base = $global:PrimaryHue
-    $rule = if ($global:TargetHarmony -eq "Auto") { $global:DetectedHarmony } else { $global:TargetHarmony }
+    $rule = $global:DetectedHarmony
+    if ($global:TargetHarmony -ne "Auto") {
+        $rule = $global:TargetHarmony
+    }
     
-    $targets = @($base)
+    $targets = [System.Collections.Generic.List[int]]::new()
+    $targets.Add($base)
+
     if ($rule -like "*Complementary*" -and $rule -notlike "*Split*") {
-        $targets = @($base, ($base + 180) % 360)
+        $targets.Add((($base + 180) % 360))
     } elseif ($rule -like "*Split-Complementary*") {
-        $targets = @($base, ($base + 150) % 360, ($base + 210) % 360)
+        $targets.Add((($base + 150) % 360))
+        $targets.Add((($base + 210) % 360))
     } elseif ($rule -like "*Triadic*") {
-        $targets = @($base, ($base + 120) % 360, ($base + 240) % 360)
+        $targets.Add((($base + 120) % 360))
+        $targets.Add((($base + 240) % 360))
     } elseif ($rule -like "*Analogous*") {
-        $targets = @((($base - 30 + 360) % 360), $base, (($base + 30) % 360))
+        $targets.Add(((($base - 30 + 360) % 360)))
+        $targets.Add((($base + 30) % 360))
     } elseif ($rule -like "*Tetradic*") {
-        $targets = @($base, ($base + 90) % 360, ($base + 180) % 360, ($base + 270) % 360)
+        $targets.Add((($base + 90) % 360))
+        $targets.Add((($base + 180) % 360))
+        $targets.Add((($base + 270) % 360))
     }
 
     $bestTarget = $targets[0]
@@ -162,10 +229,12 @@ function Get-NudgeShift([int]$currentHue) {
     }
 }
 
-# --- Create Main Window Form ---
+# ==================== MAIN WINDOW FORM CONSTRUCTION ====================
+
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Photo Color Analysis & Harmony Lab (pwsh Native)"
-$form.Size = New-Object System.Drawing.Size(1200, 820)
+$form.Size = New-Object System.Drawing.Size(1260, 860)
+$form.MinimumSize = New-Object System.Drawing.Size(1000, 700)
 $form.StartPosition = "CenterScreen"
 $form.BackColor = [System.Drawing.Color]::FromArgb(15, 23, 42) # Slate-900
 $form.ForeColor = [System.Drawing.Color]::FromArgb(241, 245, 249) # Slate-100
@@ -187,18 +256,18 @@ $titleLabel.AutoSize = $true
 $topPanel.Controls.Add($titleLabel)
 
 $subtitleLabel = New-Object System.Windows.Forms.Label
-$subtitleLabel.Text = "Sample photo pins • 2D Color Wheel • Lightroom Nudge Guide • Standalone EXE Ready"
+$subtitleLabel.Text = "Sample photo pins | 2D Color Wheel | Lightroom Nudge Guide | Standalone EXE Ready"
 $subtitleLabel.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $subtitleLabel.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
 $subtitleLabel.Location = New-Object System.Drawing.Point(18, 36)
 $subtitleLabel.AutoSize = $true
 $topPanel.Controls.Add($subtitleLabel)
 
-# Buttons on Top Panel
+# Buttons on Top Panel (Pure ASCII labels)
 $btnOpen = New-Object System.Windows.Forms.Button
-$btnOpen.Text = "📂 Open Photo"
-$btnOpen.Location = New-Object System.Drawing.Point(520, 15)
-$btnOpen.Size = New-Object System.Drawing.Size(105, 36)
+$btnOpen.Text = "Open Photo"
+$btnOpen.Location = New-Object System.Drawing.Point(540, 15)
+$btnOpen.Size = New-Object System.Drawing.Size(110, 36)
 $btnOpen.BackColor = [System.Drawing.Color]::FromArgb(79, 70, 229) # Indigo-600
 $btnOpen.ForeColor = [System.Drawing.Color]::White
 $btnOpen.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -207,9 +276,9 @@ $btnOpen.Cursor = [System.Windows.Forms.Cursors]::Hand
 $topPanel.Controls.Add($btnOpen)
 
 $btnAuto = New-Object System.Windows.Forms.Button
-$btnAuto.Text = "✨ Auto Extract"
-$btnAuto.Location = New-Object System.Drawing.Point(635, 15)
-$btnAuto.Size = New-Object System.Drawing.Size(115, 36)
+$btnAuto.Text = "Auto Extract"
+$btnAuto.Location = New-Object System.Drawing.Point(660, 15)
+$btnAuto.Size = New-Object System.Drawing.Size(120, 36)
 $btnAuto.BackColor = [System.Drawing.Color]::FromArgb(217, 119, 6) # Amber-600
 $btnAuto.ForeColor = [System.Drawing.Color]::White
 $btnAuto.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -218,9 +287,9 @@ $btnAuto.Cursor = [System.Windows.Forms.Cursors]::Hand
 $topPanel.Controls.Add($btnAuto)
 
 $btnSample = New-Object System.Windows.Forms.Button
-$btnSample.Text = "🎨 Demo Photo"
-$btnSample.Location = New-Object System.Drawing.Point(760, 15)
-$btnSample.Size = New-Object System.Drawing.Size(105, 36)
+$btnSample.Text = "Demo Photo"
+$btnSample.Location = New-Object System.Drawing.Point(790, 15)
+$btnSample.Size = New-Object System.Drawing.Size(110, 36)
 $btnSample.BackColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
 $btnSample.ForeColor = [System.Drawing.Color]::White
 $btnSample.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -229,9 +298,9 @@ $btnSample.Cursor = [System.Windows.Forms.Cursors]::Hand
 $topPanel.Controls.Add($btnSample)
 
 $btnReset = New-Object System.Windows.Forms.Button
-$btnReset.Text = "🔄 Reset Pins"
-$btnReset.Location = New-Object System.Drawing.Point(875, 15)
-$btnReset.Size = New-Object System.Drawing.Size(95, 36)
+$btnReset.Text = "Reset Pins"
+$btnReset.Location = New-Object System.Drawing.Point(910, 15)
+$btnReset.Size = New-Object System.Drawing.Size(100, 36)
 $btnReset.BackColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
 $btnReset.ForeColor = [System.Drawing.Color]::FromArgb(248, 113, 113)
 $btnReset.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -240,9 +309,9 @@ $btnReset.Cursor = [System.Windows.Forms.Cursors]::Hand
 $topPanel.Controls.Add($btnReset)
 
 $btnExport = New-Object System.Windows.Forms.Button
-$btnExport.Text = "💾 Export JSON"
-$btnExport.Location = New-Object System.Drawing.Point(980, 15)
-$btnExport.Size = New-Object System.Drawing.Size(110, 36)
+$btnExport.Text = "Export JSON"
+$btnExport.Location = New-Object System.Drawing.Point(1020, 15)
+$btnExport.Size = New-Object System.Drawing.Size(115, 36)
 $btnExport.BackColor = [System.Drawing.Color]::FromArgb(16, 185, 129)
 $btnExport.ForeColor = [System.Drawing.Color]::White
 $btnExport.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
@@ -257,18 +326,18 @@ $statusStrip.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
 $form.Controls.Add($statusStrip)
 
 $statusLabel = New-Object System.Windows.Forms.ToolStripStatusLabel
-$statusLabel.Text = "Ready. Click on the photo to drop color sample pins (up to 10 points)."
+$statusLabel.Text = "Ready. Click on the photo to drop color sample pins (up to 10 points), or click pins to highlight."
 $statusStrip.Items.Add($statusLabel) | Out-Null
 
 # --- Main Split Container ---
 $splitContainer = New-Object System.Windows.Forms.SplitContainer
 $splitContainer.Dock = [System.Windows.Forms.DockStyle]::Fill
 $splitContainer.BackColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
-$splitContainer.SplitterDistance = 680
+$splitContainer.SplitterDistance = 710
 $splitContainer.SplitterWidth = 6
 $form.Controls.Add($splitContainer)
 
-# ==================== LEFT PANEL (Photo & Markers) ====================
+# ==================== LEFT PANEL (Photo & Markers DataGridView) ====================
 $leftPanel = New-Object System.Windows.Forms.Panel
 $leftPanel.Dock = [System.Windows.Forms.DockStyle]::Fill
 $leftPanel.BackColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
@@ -278,37 +347,67 @@ $splitContainer.Panel1.Controls.Add($leftPanel)
 # Photo Canvas PictureBox
 $picPhoto = New-Object System.Windows.Forms.PictureBox
 $picPhoto.Dock = [System.Windows.Forms.DockStyle]::Top
-$picPhoto.Height = 440
+$picPhoto.Height = 420
 $picPhoto.BackColor = [System.Drawing.Color]::FromArgb(2, 6, 23)
 $picPhoto.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
 $picPhoto.Cursor = [System.Windows.Forms.Cursors]::Cross
-$leftPanel.Controls.Add($picPhoto)
 
 # Markers List Header
 $markersHeader = New-Object System.Windows.Forms.Label
-$markersHeader.Text = "SAMPLED COLOR PALETTE (Click photo to add points)"
+$markersHeader.Text = "SAMPLED COLOR PALETTE (Click photo to sample, click rows or wheel pins to highlight)"
 $markersHeader.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
 $markersHeader.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
 $markersHeader.Dock = [System.Windows.Forms.DockStyle]::Top
 $markersHeader.Height = 28
-$leftPanel.Controls.Add($markersHeader)
 
-# Markers ListView
-$lstMarkers = New-Object System.Windows.Forms.ListView
-$lstMarkers.Dock = [System.Windows.Forms.DockStyle]::Fill
-$lstMarkers.View = [System.Windows.Forms.View]::Details
-$lstMarkers.FullRowSelect = $true
-$lstMarkers.GridLines = $true
-$lstMarkers.BackColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
-$lstMarkers.ForeColor = [System.Drawing.Color]::White
-$lstMarkers.Columns.Add("#", 35) | Out-Null
-$lstMarkers.Columns.Add("Color", 60) | Out-Null
-$lstMarkers.Columns.Add("Label", 120) | Out-Null
-$lstMarkers.Columns.Add("HEX", 85) | Out-Null
-$lstMarkers.Columns.Add("RGB", 110) | Out-Null
-$lstMarkers.Columns.Add("HSL (Hue/Sat/Lum)", 130) | Out-Null
-$lstMarkers.Columns.Add("Coords", 90) | Out-Null
-$leftPanel.Controls.Add($lstMarkers)
+# Markers High-Contrast DataGridView (Dark Mode Native)
+$gridMarkers = New-Object System.Windows.Forms.DataGridView
+$gridMarkers.Dock = [System.Windows.Forms.DockStyle]::Fill
+$gridMarkers.BackgroundColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
+$gridMarkers.GridColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
+$gridMarkers.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+$gridMarkers.CellBorderStyle = [System.Windows.Forms.DataGridViewCellBorderStyle]::SingleHorizontal
+$gridMarkers.EnableHeadersVisualStyles = $false
+$gridMarkers.ColumnHeadersBorderStyle = [System.Windows.Forms.DataGridViewHeaderBorderStyle]::None
+$gridMarkers.ColumnHeadersDefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
+$gridMarkers.ColumnHeadersDefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(203, 213, 225)
+$gridMarkers.ColumnHeadersDefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+$gridMarkers.ColumnHeadersHeight = 32
+$gridMarkers.ColumnHeadersHeightSizeMode = [System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode]::DisableResizing
+$gridMarkers.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
+$gridMarkers.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(241, 245, 249)
+$gridMarkers.DefaultCellStyle.SelectionBackColor = [System.Drawing.Color]::FromArgb(79, 70, 229)
+$gridMarkers.DefaultCellStyle.SelectionForeColor = [System.Drawing.Color]::White
+$gridMarkers.DefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$gridMarkers.RowHeadersVisible = $false
+$gridMarkers.AllowUserToAddRows = $false
+$gridMarkers.AllowUserToDeleteRows = $false
+$gridMarkers.AllowUserToResizeRows = $false
+$gridMarkers.ReadOnly = $true
+$gridMarkers.SelectionMode = [System.Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
+$gridMarkers.MultiSelect = $false
+
+[void]$gridMarkers.Columns.Add("Id", "#")
+$gridMarkers.Columns["Id"].Width = 36
+[void]$gridMarkers.Columns.Add("Swatch", "Color")
+$gridMarkers.Columns["Swatch"].Width = 85
+[void]$gridMarkers.Columns.Add("Label", "Label")
+$gridMarkers.Columns["Label"].Width = 130
+[void]$gridMarkers.Columns.Add("Hex", "HEX")
+$gridMarkers.Columns["Hex"].Width = 85
+[void]$gridMarkers.Columns.Add("Rgb", "RGB")
+$gridMarkers.Columns["Rgb"].Width = 115
+[void]$gridMarkers.Columns.Add("Hsl", "HSL (Hue / Sat / Lum)")
+$gridMarkers.Columns["Hsl"].Width = 155
+[void]$gridMarkers.Columns.Add("Coords", "Coords")
+$gridMarkers.Columns["Coords"].Width = 90
+
+# Add Left Panel Controls in strictly correct Dock order:
+$leftPanel.Controls.Add($gridMarkers)
+$leftPanel.Controls.Add($markersHeader)
+$markersHeader.SendToBack()
+$leftPanel.Controls.Add($picPhoto)
+$picPhoto.SendToBack()
 
 # ==================== RIGHT PANEL (Color Wheel & Analytics) ====================
 $rightPanel = New-Object System.Windows.Forms.Panel
@@ -320,26 +419,26 @@ $splitContainer.Panel2.Controls.Add($rightPanel)
 # Wheel Controls Bar (Pure Hue toggle + Target Rule)
 $wheelBar = New-Object System.Windows.Forms.Panel
 $wheelBar.Dock = [System.Windows.Forms.DockStyle]::Top
-$wheelBar.Height = 40
-$rightPanel.Controls.Add($wheelBar)
+$wheelBar.Height = 38
+$wheelBar.BackColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
 
 $chkPureHue = New-Object System.Windows.Forms.CheckBox
 $chkPureHue.Text = "Pure Hue Mode"
-$chkPureHue.Location = New-Object System.Drawing.Point(4, 8)
+$chkPureHue.Location = New-Object System.Drawing.Point(4, 7)
 $chkPureHue.AutoSize = $true
 $chkPureHue.ForeColor = [System.Drawing.Color]::FromArgb(226, 232, 240)
 $wheelBar.Controls.Add($chkPureHue)
 
 $lblRule = New-Object System.Windows.Forms.Label
 $lblRule.Text = "Target Rule:"
-$lblRule.Location = New-Object System.Drawing.Point(160, 10)
+$lblRule.Location = New-Object System.Drawing.Point(165, 9)
 $lblRule.AutoSize = $true
 $lblRule.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
 $wheelBar.Controls.Add($lblRule)
 
 $cboHarmony = New-Object System.Windows.Forms.ComboBox
-$cboHarmony.Location = New-Object System.Drawing.Point(245, 6)
-$cboHarmony.Size = New-Object System.Drawing.Size(180, 26)
+$cboHarmony.Location = New-Object System.Drawing.Point(250, 5)
+$cboHarmony.Size = New-Object System.Drawing.Size(185, 26)
 $cboHarmony.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
 $cboHarmony.BackColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
 $cboHarmony.ForeColor = [System.Drawing.Color]::White
@@ -350,52 +449,98 @@ $wheelBar.Controls.Add($cboHarmony)
 # Color Wheel PictureBox
 $picWheel = New-Object System.Windows.Forms.PictureBox
 $picWheel.Dock = [System.Windows.Forms.DockStyle]::Top
-$picWheel.Height = 280
+$picWheel.Height = 260
 $picWheel.BackColor = [System.Drawing.Color]::FromArgb(2, 6, 23)
-$rightPanel.Controls.Add($picWheel)
+$picWheel.Cursor = [System.Windows.Forms.Cursors]::Hand
 
 # Harmony Summary Card
 $pnlSummary = New-Object System.Windows.Forms.Panel
 $pnlSummary.Dock = [System.Windows.Forms.DockStyle]::Top
-$pnlSummary.Height = 50
+$pnlSummary.Height = 44
 $pnlSummary.BackColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
-$pnlSummary.Padding = New-Object System.Windows.Forms.Padding(8)
-$rightPanel.Controls.Add($pnlSummary)
+$pnlSummary.Padding = New-Object System.Windows.Forms.Padding(6)
 
 $lblDetected = New-Object System.Windows.Forms.Label
-$lblDetected.Text = "Natural Harmony: Monochromatic | Base Hue: 0°"
+$lblDetected.Text = "Natural Harmony: Monochromatic | Base Hue: 0 deg"
 $lblDetected.Font = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Bold)
 $lblDetected.ForeColor = [System.Drawing.Color]::FromArgb(129, 140, 248) # Indigo-400
 $lblDetected.Dock = [System.Windows.Forms.DockStyle]::Fill
 $lblDetected.TextAlign = [System.Drawing.ContentAlignment]::MiddleCenter
 $pnlSummary.Controls.Add($lblDetected)
 
-# Nudge & Lightroom Advice Tabs
-$tabAnalytics = New-Object System.Windows.Forms.TabControl
-$tabAnalytics.Dock = [System.Windows.Forms.DockStyle]::Fill
-$tabAnalytics.BackColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
-$tabAnalytics.ForeColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
-$rightPanel.Controls.Add($tabAnalytics)
+# Tab Bar Switcher (Clean, dark-mode native toggle buttons, eliminating TabControl rendering glitches)
+$pnlTabHeader = New-Object System.Windows.Forms.Panel
+$pnlTabHeader.Dock = [System.Windows.Forms.DockStyle]::Top
+$pnlTabHeader.Height = 38
+$pnlTabHeader.BackColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
+$pnlTabHeader.Padding = New-Object System.Windows.Forms.Padding(0, 4, 0, 4)
 
-$tabNudge = New-Object System.Windows.Forms.TabPage
-$tabNudge.Text = "🎯 Hue Nudge Shifts"
-$tabAnalytics.TabPages.Add($tabNudge)
+$btnTabNudge = New-Object System.Windows.Forms.Button
+$btnTabNudge.Text = "Hue Nudge Shifts"
+$btnTabNudge.Location = New-Object System.Drawing.Point(0, 4)
+$btnTabNudge.Size = New-Object System.Drawing.Size(160, 30)
+$btnTabNudge.BackColor = [System.Drawing.Color]::FromArgb(79, 70, 229) # Active Indigo
+$btnTabNudge.ForeColor = [System.Drawing.Color]::White
+$btnTabNudge.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnTabNudge.FlatAppearance.BorderSize = 0
+$btnTabNudge.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+$btnTabNudge.Cursor = [System.Windows.Forms.Cursors]::Hand
+$pnlTabHeader.Controls.Add($btnTabNudge)
 
-$lstNudge = New-Object System.Windows.Forms.ListView
-$lstNudge.Dock = [System.Windows.Forms.DockStyle]::Fill
-$lstNudge.View = [System.Windows.Forms.View]::Details
-$lstNudge.FullRowSelect = $true
-$lstNudge.GridLines = $true
-$lstNudge.Columns.Add("Point", 80) | Out-Null
-$lstNudge.Columns.Add("Current Hue", 90) | Out-Null
-$lstNudge.Columns.Add("Target Hue", 90) | Out-Null
-$lstNudge.Columns.Add("Recommended Shift", 130) | Out-Null
-$tabNudge.Controls.Add($lstNudge)
+$btnTabTips = New-Object System.Windows.Forms.Button
+$btnTabTips.Text = "Lightroom Strategy"
+$btnTabTips.Location = New-Object System.Drawing.Point(168, 4)
+$btnTabTips.Size = New-Object System.Drawing.Size(160, 30)
+$btnTabTips.BackColor = [System.Drawing.Color]::FromArgb(30, 41, 59) # Inactive Slate
+$btnTabTips.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
+$btnTabTips.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$btnTabTips.FlatAppearance.BorderSize = 0
+$btnTabTips.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+$btnTabTips.Cursor = [System.Windows.Forms.Cursors]::Hand
+$pnlTabHeader.Controls.Add($btnTabTips)
 
-$tabTips = New-Object System.Windows.Forms.TabPage
-$tabTips.Text = "🎛️ Lightroom / Grading Strategy"
-$tabAnalytics.TabPages.Add($tabTips)
+# Tab Content Body Panel
+$pnlTabBody = New-Object System.Windows.Forms.Panel
+$pnlTabBody.Dock = [System.Windows.Forms.DockStyle]::Fill
+$pnlTabBody.BackColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
 
+# Nudge DataGridView (Dark Mode Native)
+$gridNudge = New-Object System.Windows.Forms.DataGridView
+$gridNudge.Dock = [System.Windows.Forms.DockStyle]::Fill
+$gridNudge.BackgroundColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
+$gridNudge.GridColor = [System.Drawing.Color]::FromArgb(51, 65, 85)
+$gridNudge.BorderStyle = [System.Windows.Forms.BorderStyle]::None
+$gridNudge.CellBorderStyle = [System.Windows.Forms.DataGridViewCellBorderStyle]::SingleHorizontal
+$gridNudge.EnableHeadersVisualStyles = $false
+$gridNudge.ColumnHeadersBorderStyle = [System.Windows.Forms.DataGridViewHeaderBorderStyle]::None
+$gridNudge.ColumnHeadersDefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
+$gridNudge.ColumnHeadersDefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(203, 213, 225)
+$gridNudge.ColumnHeadersDefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+$gridNudge.ColumnHeadersHeight = 30
+$gridNudge.ColumnHeadersHeightSizeMode = [System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode]::DisableResizing
+$gridNudge.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
+$gridNudge.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(241, 245, 249)
+$gridNudge.DefaultCellStyle.SelectionBackColor = [System.Drawing.Color]::FromArgb(79, 70, 229)
+$gridNudge.DefaultCellStyle.SelectionForeColor = [System.Drawing.Color]::White
+$gridNudge.DefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$gridNudge.RowHeadersVisible = $false
+$gridNudge.AllowUserToAddRows = $false
+$gridNudge.AllowUserToDeleteRows = $false
+$gridNudge.AllowUserToResizeRows = $false
+$gridNudge.ReadOnly = $true
+$gridNudge.SelectionMode = [System.Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
+
+[void]$gridNudge.Columns.Add("Point", "Sample Point")
+$gridNudge.Columns["Point"].Width = 110
+[void]$gridNudge.Columns.Add("Cur", "Current Hue")
+$gridNudge.Columns["Cur"].Width = 95
+[void]$gridNudge.Columns.Add("Tgt", "Target Hue")
+$gridNudge.Columns["Tgt"].Width = 95
+[void]$gridNudge.Columns.Add("Shift", "Recommended Shift")
+$gridNudge.Columns["Shift"].Width = 145
+$pnlTabBody.Controls.Add($gridNudge)
+
+# Lightroom Tips TextBox
 $txtTips = New-Object System.Windows.Forms.TextBox
 $txtTips.Dock = [System.Windows.Forms.DockStyle]::Fill
 $txtTips.Multiline = $true
@@ -404,7 +549,38 @@ $txtTips.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
 $txtTips.BackColor = [System.Drawing.Color]::FromArgb(15, 23, 42)
 $txtTips.ForeColor = [System.Drawing.Color]::FromArgb(226, 232, 240)
 $txtTips.Font = New-Object System.Drawing.Font("Consolas", 9.5)
-$tabTips.Controls.Add($txtTips)
+$txtTips.Visible = $false
+$pnlTabBody.Controls.Add($txtTips)
+
+# Tab Toggle Logic
+$btnTabNudge.Add_Click({
+    $btnTabNudge.BackColor = [System.Drawing.Color]::FromArgb(79, 70, 229)
+    $btnTabNudge.ForeColor = [System.Drawing.Color]::White
+    $btnTabTips.BackColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
+    $btnTabTips.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
+    $gridNudge.Visible = $true
+    $txtTips.Visible = $false
+})
+
+$btnTabTips.Add_Click({
+    $btnTabTips.BackColor = [System.Drawing.Color]::FromArgb(79, 70, 229)
+    $btnTabTips.ForeColor = [System.Drawing.Color]::White
+    $btnTabNudge.BackColor = [System.Drawing.Color]::FromArgb(30, 41, 59)
+    $btnTabNudge.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184)
+    $gridNudge.Visible = $false
+    $txtTips.Visible = $true
+})
+
+# Add Right Panel Controls in strictly correct Dock order:
+$rightPanel.Controls.Add($pnlTabBody)
+$rightPanel.Controls.Add($pnlTabHeader)
+$pnlTabHeader.SendToBack()
+$rightPanel.Controls.Add($pnlSummary)
+$pnlSummary.SendToBack()
+$rightPanel.Controls.Add($picWheel)
+$picWheel.SendToBack()
+$rightPanel.Controls.Add($wheelBar)
+$wheelBar.SendToBack()
 
 # ==================== DRAWING & EVENT LOGIC ====================
 
@@ -418,38 +594,42 @@ $picWheel.Add_Paint({
     $h = $picWheel.Height
     $cx = $w / 2.0
     $cy = $h / 2.0
-    $radius = [Math]::Min($cx, $cy) - 24
+    $radius = [Math]::Min($cx, $cy) - 20
 
-    # 1. Draw Hue Spectrum Radial Sweep
+    # 1. Draw 360-degree Hue Spectrum using LinearGradientBrush wedges
+    # Center = Pure White (Sat 0%), Outer Edge = Full Saturated Color (Sat 100%)
     for ($angle = 0; $angle -lt 360; $angle += 2) {
-        $rad1 = ($angle - 1.2) * [Math]::PI / 180.0
-        $rad2 = ($angle + 1.2) * [Math]::PI / 180.0
+        $rad1 = ($angle - 1.1) * [Math]::PI / 180.0
+        $rad2 = ($angle + 1.1) * [Math]::PI / 180.0
 
-        # Calculate HSL color for this angle
-        $c = ColorFromHSL $angle 0.85 0.5
+        $c = ColorFromHSL $angle 1.0 0.5
 
-        $pts = @(
-            (New-Object System.Drawing.PointF($cx, $cy)),
-            (New-Object System.Drawing.PointF(($cx + $radius * [Math]::Cos($rad1)), ($cy + $radius * [Math]::Sin($rad1)))),
-            (New-Object System.Drawing.PointF(($cx + $radius * [Math]::Cos($rad2)), ($cy + $radius * [Math]::Sin($rad2))))
-        )
-        $brush = New-Object System.Drawing.SolidBrush($c)
-        $g.FillPolygon($brush, $pts)
-        $brush.Dispose()
+        $ptCenter = New-Object System.Drawing.PointF($cx, $cy)
+        $ptEdge1 = New-Object System.Drawing.PointF(($cx + $radius * [Math]::Cos($rad1)), ($cy + $radius * [Math]::Sin($rad1)))
+        $ptEdge2 = New-Object System.Drawing.PointF(($cx + $radius * [Math]::Cos($rad2)), ($cy + $radius * [Math]::Sin($rad2)))
+
+        $pts = @($ptCenter, $ptEdge1, $ptEdge2)
+
+        if ($global:PureHueMode) {
+            $brush = New-Object System.Drawing.SolidBrush($c)
+            $g.FillPolygon($brush, $pts)
+            $brush.Dispose()
+        } else {
+            $midRad = $angle * [Math]::PI / 180.0
+            $ptMidEdge = New-Object System.Drawing.PointF(($cx + $radius * [Math]::Cos($midRad)), ($cy + $radius * [Math]::Sin($midRad)))
+            $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($ptCenter, $ptMidEdge, [System.Drawing.Color]::White, $c)
+            $g.FillPolygon($brush, $pts)
+            $brush.Dispose()
+        }
     }
 
-    # Overlay inner white gradient to emulate saturation
-    $path = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $path.AddEllipse(($cx - $radius), ($cy - $radius), ($radius * 2), ($radius * 2))
-    $pbr = New-Object System.Drawing.Drawing2D.PathGradientBrush($path)
-    $pbr.CenterColor = [System.Drawing.Color]::FromArgb(220, 255, 255, 255)
-    $pbr.SurroundingColors = @([System.Drawing.Color]::FromArgb(0, 255, 255, 255))
-    $g.FillEllipse($pbr, ($cx - $radius), ($cy - $radius), ($radius * 2), ($radius * 2))
-    $pbr.Dispose()
-    $path.Dispose()
+    # Outer border ring around the wheel
+    $penWheelRing = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(120, 255, 255, 255), 2)
+    $g.DrawEllipse($penWheelRing, ($cx - $radius), ($cy - $radius), ($radius * 2), ($radius * 2))
+    $penWheelRing.Dispose()
 
-    # 2. Concentric Saturation Rings
-    $penGrid = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(70, 255, 255, 255), 1)
+    # 2. Concentric Saturation Reference Rings
+    $penGrid = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(65, 0, 0, 0), 1)
     $penGrid.DashStyle = [System.Drawing.Drawing2D.DashStyle]::Dash
     foreach ($ratio in @(0.33, 0.66, 1.0)) {
         $r = $radius * $ratio
@@ -466,12 +646,13 @@ $picWheel.Add_Paint({
     $penGrid.Dispose()
 
     # 3. Target Harmony Overlay Lines
-    $rule = if ($global:TargetHarmony -eq "Auto") { $global:DetectedHarmony } else { $global:TargetHarmony }
+    $rule = $global:DetectedHarmony
+    if ($global:TargetHarmony -ne "Auto") {
+        $rule = $global:TargetHarmony
+    }
+
     if ($global:Markers.Count -gt 0) {
         $base = $global:PrimaryHue
-        $penGuide = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(200, 59, 130, 246), 2)
-        $penGuide.DashStyle = [System.Drawing.Drawing2D.DashStyle]::Dot
-
         $drawSpoke = {
             param([int]$hueAngle, [System.Drawing.Color]$color)
             $p = New-Object System.Drawing.Pen($color, 2)
@@ -499,28 +680,43 @@ $picWheel.Add_Paint({
             &$drawSpoke $base ([System.Drawing.Color]::Cyan)
             &$drawSpoke (($base + 30) % 360) ([System.Drawing.Color]::LightGray)
         }
-        $penGuide.Dispose()
     }
 
     # 4. Plot Sampled Markers on Color Wheel
-    $fontId = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Bold)
+    $fontId = New-Object System.Drawing.Font("Segoe UI", 8.5, [System.Drawing.FontStyle]::Bold)
     foreach ($m in $global:Markers) {
         $angleRad = $m.Hsl.H * [Math]::PI / 180.0
-        $dist = if ($global:PureHueMode) { $radius } else { ($m.Hsl.S / 100.0) * $radius }
+        $dist = ($m.Hsl.S / 100.0) * $radius
+        if ($global:PureHueMode) {
+            $dist = $radius
+        }
 
         $px = $cx + $dist * [Math]::Cos($angleRad)
         $py = $cy + $dist * [Math]::Sin($angleRad)
 
+        $isSelected = ($null -ne $global:SelectedMarkerId -and $m.Id -eq $global:SelectedMarkerId)
+
+        if ($isSelected) {
+            # Highlight Halo on Color Wheel
+            $penGlow = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(250, 204, 21), 3)
+            $g.DrawEllipse($penGlow, ($px - 14), ($py - 14), 28, 28)
+            $penGlow.Dispose()
+        }
+
         $c = [System.Drawing.Color]::FromArgb($m.R, $m.G, $m.B)
         $br = New-Object System.Drawing.SolidBrush($c)
-        $g.FillEllipse($br, ($px - 9), ($py - 9), 18, 18)
+        $g.FillEllipse($br, ($px - 10), ($py - 10), 20, 20)
         $br.Dispose()
 
-        $penDot = New-Object System.Drawing.Pen([System.Drawing.Color]::White, 2)
-        $g.DrawEllipse($penDot, ($px - 9), ($py - 9), 18, 18)
+        $penOuterColor = if ($isSelected) { [System.Drawing.Color]::FromArgb(250, 204, 21) } else { [System.Drawing.Color]::White }
+        $penDot = New-Object System.Drawing.Pen($penOuterColor, 2)
+        $g.DrawEllipse($penDot, ($px - 10), ($py - 10), 20, 20)
         $penDot.Dispose()
 
-        $textColor = if ($m.Hsl.L -gt 60) { [System.Drawing.Color]::Black } else { [System.Drawing.Color]::White }
+        $textColor = [System.Drawing.Color]::White
+        if ($m.Hsl.L -gt 60) {
+            $textColor = [System.Drawing.Color]::Black
+        }
         $brText = New-Object System.Drawing.SolidBrush($textColor)
         $textFormat = New-Object System.Drawing.StringFormat
         $textFormat.Alignment = [System.Drawing.StringAlignment]::Center
@@ -531,26 +727,55 @@ $picWheel.Add_Paint({
     $fontId.Dispose()
 })
 
-# Helper HSL to Color for Wheel GDI
-function ColorFromHSL([double]$h, [double]$s, [double]$l) {
-    $c = (1.0 - [Math]::Abs(2.0 * $l - 1.0)) * $s
-    $hp = $h / 60.0
-    $x = $c * (1.0 - [Math]::Abs(($hp % 2.0) - 1.0))
-    $m = $l - $c / 2.0
+# Color Wheel Mouse Click: Select/Highlight Pin
+$picWheel.Add_MouseClick({
+    param($sender, $e)
+    $w = $picWheel.Width
+    $h = $picWheel.Height
+    $cx = $w / 2.0
+    $cy = $h / 2.0
+    $radius = [Math]::Min($cx, $cy) - 20
 
-    $r1 = 0; $g1 = 0; $b1 = 0
-    if ($hp -lt 1) { $r1 = $c; $g1 = $x }
-    elseif ($hp -lt 2) { $r1 = $x; $g1 = $c }
-    elseif ($hp -lt 3) { $g1 = $c; $b1 = $x }
-    elseif ($hp -lt 4) { $g1 = $x; $b1 = $c }
-    elseif ($hp -lt 5) { $r1 = $x; $b1 = $c }
-    else { $r1 = $c; $b1 = $x }
+    $clickedMarker = $null
+    foreach ($m in $global:Markers) {
+        $angleRad = $m.Hsl.H * [Math]::PI / 180.0
+        $dist = ($m.Hsl.S / 100.0) * $radius
+        if ($global:PureHueMode) {
+            $dist = $radius
+        }
 
-    $r = [int][Math]::Round(($r1 + $m) * 255)
-    $g = [int][Math]::Round(($g1 + $m) * 255)
-    $b = [int][Math]::Round(($b1 + $m) * 255)
-    return [System.Drawing.Color]::FromArgb($r, $g, $b)
-}
+        $px = $cx + $dist * [Math]::Cos($angleRad)
+        $py = $cy + $dist * [Math]::Sin($angleRad)
+
+        $dx = $e.X - $px
+        $dy = $e.Y - $py
+        $clickDist = [Math]::Sqrt($dx * $dx + $dy * $dy)
+        if ($clickDist -le 16) {
+            $clickedMarker = $m
+            break
+        }
+    }
+
+    if ($null -ne $clickedMarker) {
+        $global:SelectedMarkerId = $clickedMarker.Id
+        $statusLabel.Text = "Selected Point #$($clickedMarker.Id) ($($clickedMarker.Label)) - $($clickedMarker.Hex) | Hue: $($clickedMarker.Hsl.H) deg Sat: $($clickedMarker.Hsl.S)% Lum: $($clickedMarker.Hsl.L)%"
+        
+        # Select row in DataGridView
+        foreach ($row in $gridMarkers.Rows) {
+            if ([int]$row.Cells[0].Value -eq $clickedMarker.Id) {
+                $row.Selected = $true
+                $gridMarkers.CurrentCell = $row.Cells[0]
+                break
+            }
+        }
+        $picPhoto.Invalidate()
+        $picWheel.Invalidate()
+    } else {
+        $global:SelectedMarkerId = $null
+        $picPhoto.Invalidate()
+        $picWheel.Invalidate()
+    }
+})
 
 # Photo Paint Handler (Draw markers over photo)
 $picPhoto.Add_Paint({
@@ -559,24 +784,38 @@ $picPhoto.Add_Paint({
     $g = $e.Graphics
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
 
-    # Calculate actual rendered image rectangle in PictureBox Zoom mode
     $rect = Get-ImageDisplayRect $picPhoto $global:CurrentBitmap
 
-    $fontId = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Bold)
+    $fontId = New-Object System.Drawing.Font("Segoe UI", 8.5, [System.Drawing.FontStyle]::Bold)
     foreach ($m in $global:Markers) {
         $px = $rect.X + ($m.XPct / 100.0) * $rect.Width
         $py = $rect.Y + ($m.YPct / 100.0) * $rect.Height
 
+        $isSelected = ($null -ne $global:SelectedMarkerId -and $m.Id -eq $global:SelectedMarkerId)
+
+        if ($isSelected) {
+            # Glowing Reticle Target on Photo
+            $penGlow = New-Object System.Drawing.Pen([System.Drawing.Color]::FromArgb(250, 204, 21), 3)
+            $g.DrawEllipse($penGlow, ($px - 16), ($py - 16), 32, 32)
+            $g.DrawLine($penGlow, ($px - 22), $py, ($px + 22), $py)
+            $g.DrawLine($penGlow, $px, ($py - 22), $px, ($py + 22))
+            $penGlow.Dispose()
+        }
+
         $c = [System.Drawing.Color]::FromArgb($m.R, $m.G, $m.B)
         $br = New-Object System.Drawing.SolidBrush($c)
-        $g.FillEllipse($br, ($px - 10), ($py - 10), 20, 20)
+        $g.FillEllipse($br, ($px - 11), ($py - 11), 22, 22)
         $br.Dispose()
 
-        $penOuter = New-Object System.Drawing.Pen([System.Drawing.Color]::White, 2)
-        $g.DrawEllipse($penOuter, ($px - 10), ($py - 10), 20, 20)
+        $penOuterColor = if ($isSelected) { [System.Drawing.Color]::FromArgb(250, 204, 21) } else { [System.Drawing.Color]::White }
+        $penOuter = New-Object System.Drawing.Pen($penOuterColor, 2)
+        $g.DrawEllipse($penOuter, ($px - 11), ($py - 11), 22, 22)
         $penOuter.Dispose()
 
-        $textColor = if ($m.Hsl.L -gt 60) { [System.Drawing.Color]::Black } else { [System.Drawing.Color]::White }
+        $textColor = [System.Drawing.Color]::White
+        if ($m.Hsl.L -gt 60) {
+            $textColor = [System.Drawing.Color]::Black
+        }
         $brText = New-Object System.Drawing.SolidBrush($textColor)
         $tf = New-Object System.Drawing.StringFormat
         $tf.Alignment = [System.Drawing.StringAlignment]::Center
@@ -587,39 +826,39 @@ $picPhoto.Add_Paint({
     $fontId.Dispose()
 })
 
-function Get-ImageDisplayRect($pb, $bmp) {
-    if ($pb.Width -eq 0 -or $pb.Height -eq 0 -or $bmp.Width -eq 0 -or $bmp.Height -eq 0) {
-        return New-Object System.Drawing.Rectangle(0,0,0,0)
-    }
-    $aspectPB = $pb.Width / $pb.Height
-    $aspectImg = $bmp.Width / $bmp.Height
-
-    $rw = 0; $rh = 0; $rx = 0; $ry = 0
-    if ($aspectImg -gt $aspectPB) {
-        $rw = $pb.Width
-        $rh = [int]($pb.Width / $aspectImg)
-        $rx = 0
-        $ry = [int](($pb.Height - $rh) / 2)
-    } else {
-        $rh = $pb.Height
-        $rw = [int]($pb.Height * $aspectImg)
-        $rx = [int](($pb.Width - $rw) / 2)
-        $ry = 0
-    }
-    return New-Object System.Drawing.Rectangle($rx, $ry, $rw, $rh)
-}
-
-# Click Photo Handler (Add Marker)
+# Click Photo Handler (Add Marker or Select Existing)
 $picPhoto.Add_MouseClick({
     param($sender, $e)
     if ($null -eq $global:CurrentBitmap) { return }
+
+    $rect = Get-ImageDisplayRect $picPhoto $global:CurrentBitmap
+    if (-not $rect.Contains($e.Location)) { return }
+
+    # Check if clicked on an existing marker to select it
+    foreach ($m in $global:Markers) {
+        $mpx = $rect.X + ($m.XPct / 100.0) * $rect.Width
+        $mpy = $rect.Y + ($m.YPct / 100.0) * $rect.Height
+        $dist = [Math]::Sqrt(($e.X - $mpx) * ($e.X - $mpx) + ($e.Y - $mpy) * ($e.Y - $mpy))
+        if ($dist -le 15) {
+            $global:SelectedMarkerId = $m.Id
+            $statusLabel.Text = "Selected Point #$($m.Id) ($($m.Label)) - $($m.Hex) | Hue: $($m.Hsl.H) deg Sat: $($m.Hsl.S)% Lum: $($m.Hsl.L)%"
+            foreach ($row in $gridMarkers.Rows) {
+                if ([int]$row.Cells[0].Value -eq $m.Id) {
+                    $row.Selected = $true
+                    $gridMarkers.CurrentCell = $row.Cells[0]
+                    break
+                }
+            }
+            $picPhoto.Invalidate()
+            $picWheel.Invalidate()
+            return
+        }
+    }
+
     if ($global:Markers.Count -ge 10) {
         [System.Windows.Forms.MessageBox]::Show("Maximum of 10 color sample points reached. Reset pins to pick new colors.", "Limit Reached", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
         return
     }
-
-    $rect = Get-ImageDisplayRect $picPhoto $global:CurrentBitmap
-    if (-not $rect.Contains($e.Location)) { return }
 
     $xPct = (($e.X - $rect.X) / [double]$rect.Width) * 100.0
     $yPct = (($e.Y - $rect.Y) / [double]$rect.Height) * 100.0
@@ -651,6 +890,7 @@ $picPhoto.Add_MouseClick({
     }
 
     $global:Markers.Add($marker) | Out-Null
+    $global:SelectedMarkerId = $markerId
     Refresh-AllUI
 })
 
@@ -658,68 +898,110 @@ function Refresh-AllUI {
     Calculate-Harmony
     
     # Update Status
-    $statusLabel.Text = "Sampled: $($global:Markers.Count)/10 pins | Dominant Hue: $($global:PrimaryHue)° | Detected Harmony: $($global:DetectedHarmony)"
-    $lblDetected.Text = "Natural Harmony: $($global:DetectedHarmony) (Base Hue: $($global:PrimaryHue)°)"
+    $statusLabel.Text = "Sampled: $($global:Markers.Count)/10 pins | Dominant Hue: $($global:PrimaryHue) deg | Detected Harmony: $($global:DetectedHarmony)"
+    $lblDetected.Text = "Natural Harmony: $($global:DetectedHarmony) (Base Hue: $($global:PrimaryHue) deg)"
 
     # Repaint Visualizers
     $picPhoto.Invalidate()
     $picWheel.Invalidate()
 
-    # Update Markers Table
-    $lstMarkers.Items.Clear()
+    # Update Markers DataGridView
+    $gridMarkers.Rows.Clear()
     foreach ($m in $global:Markers) {
-        $item = New-Object System.Windows.Forms.ListViewItem($m.Id.ToString())
-        $item.SubItems.Add("■") | Out-Null
-        $item.SubItems.Add($m.Label) | Out-Null
-        $item.SubItems.Add($m.Hex) | Out-Null
-        $item.SubItems.Add("$($m.R), $($m.G), $($m.B)") | Out-Null
-        $item.SubItems.Add("H:$($m.Hsl.H)° S:$($m.Hsl.S)% L:$($m.Hsl.L)%") | Out-Null
-        $item.SubItems.Add("$($m.XPct)%, $($m.YPct)%") | Out-Null
-        $item.ForeColor = [System.Drawing.Color]::White
-        $item.SubItems[1].ForeColor = [System.Drawing.Color]::FromArgb($m.R, $m.G, $m.B)
-        $lstMarkers.Items.Add($item) | Out-Null
+        $rowIdx = $gridMarkers.Rows.Add(
+            $m.Id,
+            $m.Hex,
+            $m.Label,
+            $m.Hex,
+            "R:$($m.R) G:$($m.G) B:$($m.B)",
+            "H:$($m.Hsl.H) deg S:$($m.Hsl.S)% L:$($m.Hsl.L)%",
+            "$($m.XPct)%, $($m.YPct)%"
+        )
+        $row = $gridMarkers.Rows[$rowIdx]
+        
+        # Color swatch block
+        $row.Cells[1].Style.BackColor = [System.Drawing.Color]::FromArgb($m.R, $m.G, $m.B)
+        $textColor = if ($m.Hsl.L -gt 60) { [System.Drawing.Color]::Black } else { [System.Drawing.Color]::White }
+        $row.Cells[1].Style.ForeColor = $textColor
+        $row.Cells[1].Style.Font = New-Object System.Drawing.Font("Segoe UI", 8.5, [System.Drawing.FontStyle]::Bold)
+        $row.Cells[1].Style.Alignment = [System.Windows.Forms.DataGridViewContentAlignment]::MiddleCenter
+
+        # High-contrast cell font colors
+        $row.Cells[2].Style.ForeColor = [System.Drawing.Color]::FromArgb(241, 245, 249) # White label
+        $row.Cells[3].Style.ForeColor = [System.Drawing.Color]::FromArgb(192, 132, 252) # Purple hex
+        $row.Cells[4].Style.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184) # Slate RGB
+        $row.Cells[5].Style.ForeColor = [System.Drawing.Color]::FromArgb(56, 189, 248)  # Cyan HSL
+        $row.Cells[6].Style.ForeColor = [System.Drawing.Color]::FromArgb(148, 163, 184) # Slate coords
     }
 
-    # Update Nudge Table
-    $lstNudge.Items.Clear()
+    # Update Nudge DataGridView
+    $gridNudge.Rows.Clear()
     foreach ($m in $global:Markers) {
         $nudge = Get-NudgeShift $m.Hsl.H
-        $item = New-Object System.Windows.Forms.ListViewItem("#$($m.Id) ($($m.Label))")
-        $item.SubItems.Add("$($m.Hsl.H)°") | Out-Null
-        $item.SubItems.Add("$($nudge.TargetHue)°") | Out-Null
+        $shiftStr = "$($nudge.Shift) deg Shift"
+        if ($nudge.IsAligned) {
+            $shiftStr = "[Aligned] Fit"
+        } elseif ($nudge.Shift -gt 0) {
+            $shiftStr = "+$($nudge.Shift) deg Shift"
+        }
+
+        $rIdx = $gridNudge.Rows.Add(
+            "#$($m.Id) ($($m.Label))",
+            "$($m.Hsl.H) deg",
+            "$($nudge.TargetHue) deg",
+            $shiftStr
+        )
+        $row = $gridNudge.Rows[$rIdx]
+        $row.Cells[0].Style.ForeColor = [System.Drawing.Color]::FromArgb(241, 245, 249)
+        $row.Cells[1].Style.ForeColor = [System.Drawing.Color]::FromArgb(226, 232, 240)
+        $row.Cells[2].Style.ForeColor = [System.Drawing.Color]::FromArgb(56, 189, 248)
         
-        $shiftStr = if ($nudge.IsAligned) { "✔ Perfect Fit" } elseif ($nudge.Shift -gt 0) { "+$($nudge.Shift)° Shift" } else { "$($nudge.Shift)° Shift" }
-        $item.SubItems.Add($shiftStr) | Out-Null
-        $item.ForeColor = if ($nudge.IsAligned) { [System.Drawing.Color]::FromArgb(52, 211, 153) } else { [System.Drawing.Color]::FromArgb(251, 191, 36) }
-        $lstNudge.Items.Add($item) | Out-Null
+        if ($nudge.IsAligned) {
+            $row.Cells[3].Style.ForeColor = [System.Drawing.Color]::FromArgb(52, 211, 153) # Green
+        } else {
+            $row.Cells[3].Style.ForeColor = [System.Drawing.Color]::FromArgb(251, 191, 36)  # Amber
+        }
+        $row.Cells[3].Style.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
     }
 
     # Update Lightroom Strategy Advice
-    $rule = if ($global:TargetHarmony -eq "Auto") { $global:DetectedHarmony } else { $global:TargetHarmony }
+    $rule = $global:DetectedHarmony
+    if ($global:TargetHarmony -ne "Auto") {
+        $rule = $global:TargetHarmony
+    }
     $sb = [System.Text.StringBuilder]::new()
     [void]$sb.AppendLine("=== LIGHTROOM & PHOTOSHOP COLOR GRADING STRATEGY ===")
-    [void]$sb.AppendLine("Target Harmony: $rule | Dominant Hue: $($global:PrimaryHue)°`r`n")
+    [void]$sb.AppendLine("Target Harmony: $rule | Dominant Hue: $($global:PrimaryHue) deg`r`n")
     [void]$sb.AppendLine("1. HSL / COLOR MIXER ADJUSTMENTS:")
     if ($rule -like "*Complementary*") {
-        [void]$sb.AppendLine("   • Push warm highlights towards Hue: $($global:PrimaryHue)°")
-        [void]$sb.AppendLine("   • Push cool shadow accents opposite towards: $((($global:PrimaryHue + 180) % 360))°")
-        [void]$sb.AppendLine("   • Slightly desaturate outlying intermediate hues to clean the dual contrast.")
+        [void]$sb.AppendLine("   - Push warm highlights towards Hue: $($global:PrimaryHue) deg")
+        [void]$sb.AppendLine("   - Push cool shadow accents opposite towards: $((($global:PrimaryHue + 180) % 360)) deg")
+        [void]$sb.AppendLine("   - Slightly desaturate outlying intermediate hues to clean dual contrast.")
     } elseif ($rule -like "*Analogous*") {
-        [void]$sb.AppendLine("   • Restrict colors within a cohesive 30°-60° spectrum arc.")
-        [void]$sb.AppendLine("   • Nudge straggling greens or blues into the adjacent warmth zone.")
+        [void]$sb.AppendLine("   - Restrict colors within a cohesive 30 to 60 deg spectrum arc.")
+        [void]$sb.AppendLine("   - Nudge straggling greens or blues into adjacent warmth zone.")
     } else {
-        [void]$sb.AppendLine("   • Distribute tonal weights evenly across the 3 target vertices: $($global:PrimaryHue)°, $((($global:PrimaryHue + 120) % 360))°, $((($global:PrimaryHue + 240) % 360))°.")
+        [void]$sb.AppendLine("   - Distribute tonal weights evenly across target vertices: $($global:PrimaryHue) deg, $((($global:PrimaryHue + 120) % 360)) deg, $((($global:PrimaryHue + 240) % 360)) deg.")
     }
     [void]$sb.AppendLine("`r`n2. COLOR GRADING (3-WAY WHEELS):")
-    [void]$sb.AppendLine("   • Highlights Wheel: Set Hue to ~$($global:PrimaryHue)° (Warm tone)")
-    [void]$sb.AppendLine("   • Shadows Wheel: Set Hue to ~$((($global:PrimaryHue + 180) % 360))° (Cool teal/blue)")
+    [void]$sb.AppendLine("   - Highlights Wheel: Set Hue to ~$($global:PrimaryHue) deg (Warm tone)")
+    [void]$sb.AppendLine("   - Shadows Wheel: Set Hue to ~$((($global:PrimaryHue + 180) % 360)) deg (Cool teal/blue)")
     [void]$sb.AppendLine("`r`n3. SATURATION & CLIPPING DISCIPLINE:")
-    [void]$sb.AppendLine("   • Drop global Vibrance/Saturation by -10% to prevent posterization, then selectively boost your target palette hues in Color Mixer.")
+    [void]$sb.AppendLine("   - Drop global Vibrance/Saturation by -10% to prevent posterization, then selectively boost target palette hues in Color Mixer.")
 
     $txtTips.Text = $sb.ToString()
 }
 
 # --- Event Listeners ---
+$gridMarkers.Add_SelectionChanged({
+    if ($gridMarkers.SelectedRows.Count -gt 0) {
+        $id = [int]$gridMarkers.SelectedRows[0].Cells[0].Value
+        $global:SelectedMarkerId = $id
+        $picPhoto.Invalidate()
+        $picWheel.Invalidate()
+    }
+})
+
 $chkPureHue.Add_CheckedChanged({
     $global:PureHueMode = $chkPureHue.Checked
     $picWheel.Invalidate()
@@ -732,6 +1014,7 @@ $cboHarmony.Add_SelectedIndexChanged({
 
 $btnReset.Add_Click({
     $global:Markers.Clear()
+    $global:SelectedMarkerId = $null
     Refresh-AllUI
 })
 
@@ -744,6 +1027,7 @@ $btnOpen.Add_Click({
             $global:CurrentBitmap = [System.Drawing.Bitmap]::FromFile($dlg.FileName)
             $picPhoto.Image = $global:CurrentBitmap
             $global:Markers.Clear()
+            $global:SelectedMarkerId = $null
             Refresh-AllUI
             $statusLabel.Text = "Loaded: $($dlg.FileName) ($($global:CurrentBitmap.Width) x $($global:CurrentBitmap.Height))"
         } catch {
@@ -759,9 +1043,10 @@ $btnAuto.Add_Click({
     }
 
     $global:Markers.Clear()
+    $global:SelectedMarkerId = $null
     $bmp = $global:CurrentBitmap
-    $stepX = [Math]::Max(1, [int]($bmp.Width / 12))
-    $stepY = [Math]::Max(1, [int]($bmp.Height / 12))
+    $stepX = [Math]::Max(1, [int]($bmp.Width / 14))
+    $stepY = [Math]::Max(1, [int]($bmp.Height / 14))
 
     $samples = [System.Collections.ArrayList]::new()
     for ($y = [int]($stepY / 2); $y -lt $bmp.Height; $y += $stepY) {
@@ -779,7 +1064,7 @@ $btnAuto.Add_Click({
 
     if ($samples.Count -eq 0) { return }
 
-    # Pick Highlights (highest Lum), Shadows (lowest Lum), Vibrant (highest Sat), and Midtones
+    # Photographic Palette Selection: Highlights, Shadows, Subject Accents & Midtones
     $sortedLum = $samples | Sort-Object { $_.Hsl.L }
     $sortedSat = $samples | Sort-Object { $_.Hsl.S }
 
@@ -795,7 +1080,7 @@ $btnAuto.Add_Click({
     $selected.Add(@{ Pt = $shadow;    Label = "Deep Shadow" }) | Out-Null
     $selected.Add(@{ Pt = $vibrant;   Label = "Vibrant Accent" }) | Out-Null
 
-    # Add 5th tone distinct from midtone
+    # Add 5th tone distinct from midtone and vibrant
     $distinct = $samples | Where-Object { 
         [Math]::Abs($_.Hsl.H - $midtone.Hsl.H) -gt 45 -and
         [Math]::Abs($_.Hsl.H - $vibrant.Hsl.H) -gt 35
@@ -871,6 +1156,7 @@ $btnSample.Add_Click({
     $global:CurrentBitmap = $bmp
     $picPhoto.Image = $bmp
     $global:Markers.Clear()
+    $global:SelectedMarkerId = $null
 
     # Add default sample points
     $defaultCoords = @(
