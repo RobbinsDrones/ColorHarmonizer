@@ -1,21 +1,24 @@
 import React, { useState } from 'react';
 import { ColorMarker } from '../types';
-import { X, Copy, Check, Download, FileText, Code2, Database } from 'lucide-react';
+import { X, Copy, Check, Download, FileText, Code2, Database, Sliders } from 'lucide-react';
+import { generateLightroomPreset, generateLightroomXmpPreset } from '../utils/colorUtils';
 
 interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   markers: ColorMarker[];
   detectedHarmony: string;
+  primaryHue?: number;
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
   isOpen,
   onClose,
   markers,
-  detectedHarmony
+  detectedHarmony,
+  primaryHue = 0
 }) => {
-  const [format, setFormat] = useState<'json' | 'csv' | 'css' | 'tailwind' | 'pwsh' | 'markdown'>('json');
+  const [format, setFormat] = useState<'xmp' | 'json' | 'csv' | 'css' | 'tailwind' | 'pwsh' | 'markdown'>('xmp');
   const [copied, setCopied] = useState(false);
 
   if (!isOpen) return null;
@@ -23,6 +26,11 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   // Format Content Generators
   const getFormattedContent = (): string => {
     switch (format) {
+      case 'xmp': {
+        const preset = generateLightroomPreset(markers, detectedHarmony, primaryHue, `Photo Harmony - ${detectedHarmony} (${Math.round(primaryHue)}°)`);
+        return generateLightroomXmpPreset(preset);
+      }
+
       case 'json':
         return JSON.stringify({
           harmony: detectedHarmony,
@@ -84,6 +92,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
   const handleDownload = () => {
     const extensions: Record<string, string> = {
+      xmp: 'xmp',
       json: 'json',
       csv: 'csv',
       css: 'css',
@@ -92,6 +101,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
       markdown: 'md'
     };
     const mimeTypes: Record<string, string> = {
+      xmp: 'application/xml',
       json: 'application/json',
       csv: 'text/csv',
       css: 'text/css',
@@ -105,10 +115,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `photo-harmony-palette.${ext}`;
+    a.download = format === 'xmp' 
+      ? `photo-harmony-${detectedHarmony.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}.xmp` 
+      : `photo-harmony-palette.${ext}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -119,10 +132,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center">
           <div>
             <h3 className="text-base font-bold text-white flex items-center gap-2">
-              <Database className="w-4 h-4 text-indigo-400" />
-              <span>Export Sampled Palette</span>
+              <Sliders className="w-4 h-4 text-indigo-400" />
+              <span>Export Palette & Lightroom Preset</span>
             </h3>
-            <p className="text-xs text-slate-400">Export your color pins in standard developer & design formats</p>
+            <p className="text-xs text-slate-400">Export as native Adobe Lightroom .XMP develop preset or developer formats</p>
           </div>
           <button
             onClick={onClose}
@@ -135,6 +148,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
         {/* Format Selector Pills */}
         <div className="px-6 pt-4 pb-2 flex flex-wrap gap-1.5 border-b border-slate-800/60 bg-slate-950/40">
           {[
+            { id: 'xmp', label: 'Lightroom .XMP', badge: 'Preset' },
             { id: 'json', label: 'JSON' },
             { id: 'csv', label: 'CSV / Excel' },
             { id: 'css', label: 'CSS Variables' },
@@ -145,13 +159,18 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             <button
               key={tab.id}
               onClick={() => setFormat(tab.id as any)}
-              className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
+              className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
                 format === tab.id
                   ? 'bg-indigo-600 text-white shadow'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
               }`}
             >
-              {tab.label}
+              <span>{tab.label}</span>
+              {tab.badge && (
+                <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                  {tab.badge}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -165,7 +184,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           {/* Action Buttons */}
           <div className="flex justify-between items-center mt-5 pt-3 border-t border-slate-800">
             <span className="text-xs text-slate-400 font-medium">
-              {markers.length} pins included
+              {format === 'xmp' ? 'Calculated HSL & 3-Way Grading Preset' : `${markers.length} pins included`}
             </span>
 
             <div className="flex space-x-2">
@@ -182,7 +201,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-4 py-2 rounded-lg font-semibold flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span>Download File</span>
+                <span>{format === 'xmp' ? 'Download .XMP Preset' : 'Download File'}</span>
               </button>
             </div>
           </div>

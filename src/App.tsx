@@ -678,6 +678,7 @@ export default function App() {
         onClose={() => setIsExportModalOpen(false)}
         markers={markers}
         detectedHarmony={detectedHarmony.type}
+        primaryHue={detectedHarmony.primaryHue}
       />
 
       {/* Footer */}

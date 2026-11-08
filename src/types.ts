@@ -50,6 +50,46 @@ export interface NudgeSuggestion {
   actionText: string;
 }
 
+export interface LightroomHslAdjustment {
+  hue: number;         // -100 to +100
+  saturation: number;  // -100 to +100
+  luminance: number;   // -100 to +100
+}
+
+export interface LightroomThreeWayGrading {
+  shadowHue: number;        // 0 to 360
+  shadowSat: number;        // 0 to 100
+  shadowLum: number;        // -100 to +100
+  midtoneHue: number;       // 0 to 360
+  midtoneSat: number;       // 0 to 100
+  midtoneLum: number;       // -100 to +100
+  highlightHue: number;     // 0 to 360
+  highlightSat: number;     // 0 to 100
+  highlightLum: number;     // -100 to +100
+  blending: number;         // 0 to 100 (default 50)
+  balance: number;          // -100 to +100 (default 0)
+}
+
+export interface LightroomPreset {
+  name: string;
+  harmonyRule: string;
+  primaryHue: number;
+  vibrance: number;     // -100 to +100 calculated global vibrance
+  saturation: number;   // -100 to +100 calculated global saturation
+  hsl: {
+    red: LightroomHslAdjustment;
+    orange: LightroomHslAdjustment;
+    yellow: LightroomHslAdjustment;
+    green: LightroomHslAdjustment;
+    aqua: LightroomHslAdjustment;
+    blue: LightroomHslAdjustment;
+    purple: LightroomHslAdjustment;
+    magenta: LightroomHslAdjustment;
+  };
+  colorGrading: LightroomThreeWayGrading;
+  description: string;
+}
+
 export interface PresetPhoto {
   name: string;
   category: string;

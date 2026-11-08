@@ -1,6 +1,7 @@
 import { 
   ColorMarker, HarmonyDetectionResult, HarmonyRule, HslColor, 
-  NudgeSuggestion, RgbColor, AutoAnalysisResult, DominantColor 
+  NudgeSuggestion, RgbColor, AutoAnalysisResult, DominantColor,
+  LightroomPreset, LightroomHslAdjustment, LightroomThreeWayGrading
 } from '../types';
 
 export const rgbToHex = (r: number, g: number, b: number): string => {
@@ -262,6 +263,330 @@ export const calculateNudgeSuggestions = (
       actionText
     };
   });
+};
+
+// Lightroom 8 Color Mixer Channels Center Hues
+const LIGHTROOM_CHANNEL_CENTERS: Record<keyof LightroomPreset['hsl'], number> = {
+  red: 0,
+  orange: 30,
+  yellow: 60,
+  green: 120,
+  aqua: 180,
+  blue: 225,
+  purple: 275,
+  magenta: 315
+};
+
+// Calculate calculated Lightroom HSL and 3-Way Color Grading values from sampled colors
+export const generateLightroomPreset = (
+  markers: ColorMarker[],
+  harmonyRule: string,
+  primaryHue: number,
+  presetName: string = 'Photo Harmony Lab Grading'
+): LightroomPreset => {
+  const rule = harmonyRule.toLowerCase();
+
+  // 1. Determine Target Harmony Angles on the 360 Color Wheel
+  let targetHues = [primaryHue];
+  if (rule.includes('complementary') && !rule.includes('split')) {
+    targetHues = [primaryHue, (primaryHue + 180) % 360];
+  } else if (rule.includes('split-complementary')) {
+    targetHues = [primaryHue, (primaryHue + 150) % 360, (primaryHue + 210) % 360];
+  } else if (rule.includes('triadic')) {
+    targetHues = [primaryHue, (primaryHue + 120) % 360, (primaryHue + 240) % 360];
+  } else if (rule.includes('analogous')) {
+    targetHues = [(primaryHue - 30 + 360) % 360, primaryHue, (primaryHue + 30) % 360];
+  } else if (rule.includes('tetradic')) {
+    targetHues = [primaryHue, (primaryHue + 90) % 360, (primaryHue + 180) % 360, (primaryHue + 270) % 360];
+  } else if (rule.includes('monochromatic')) {
+    targetHues = [primaryHue];
+  }
+
+  // 2. Map sampled markers to the 8 standard Lightroom Color Mixer channels
+  const channels: Array<keyof LightroomPreset['hsl']> = [
+    'red', 'orange', 'yellow', 'green', 'aqua', 'blue', 'purple', 'magenta'
+  ];
+
+  const channelAdjustments: Record<keyof LightroomPreset['hsl'], LightroomHslAdjustment> = {
+    red: { hue: 0, saturation: 0, luminance: 0 },
+    orange: { hue: 0, saturation: 0, luminance: 0 },
+    yellow: { hue: 0, saturation: 0, luminance: 0 },
+    green: { hue: 0, saturation: 0, luminance: 0 },
+    aqua: { hue: 0, saturation: 0, luminance: 0 },
+    blue: { hue: 0, saturation: 0, luminance: 0 },
+    purple: { hue: 0, saturation: 0, luminance: 0 },
+    magenta: { hue: 0, saturation: 0, luminance: 0 }
+  };
+
+  // Helper to determine which Lightroom channel a hue belongs to
+  const getLightroomChannel = (hue: number): keyof LightroomPreset['hsl'] => {
+    let closestChannel: keyof LightroomPreset['hsl'] = 'red';
+    let minDistance = 360;
+
+    for (const ch of channels) {
+      const center = LIGHTROOM_CHANNEL_CENTERS[ch];
+      const dist = Math.abs(angleDiff(hue, center));
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestChannel = ch;
+      }
+    }
+    return closestChannel;
+  };
+
+  // Compute shifts for channels with sampled colors
+  const channelSamples: Record<keyof LightroomPreset['hsl'], ColorMarker[]> = {
+    red: [], orange: [], yellow: [], green: [], aqua: [], blue: [], purple: [], magenta: []
+  };
+
+  markers.forEach(m => {
+    const ch = getLightroomChannel(m.hsl.h);
+    channelSamples[ch].push(m);
+  });
+
+  // Calculate specific HSL adjustments per channel
+  channels.forEach(ch => {
+    const centerHue = LIGHTROOM_CHANNEL_CENTERS[ch];
+    const samples = channelSamples[ch];
+
+    // Find the closest target harmony angle to this channel's center
+    let closestTarget = targetHues[0];
+    let minDiffToTarget = Math.abs(angleDiff(centerHue, targetHues[0]));
+    targetHues.forEach(th => {
+      const d = Math.abs(angleDiff(centerHue, th));
+      if (d < minDiffToTarget) {
+        minDiffToTarget = d;
+        closestTarget = th;
+      }
+    });
+
+    if (samples.length > 0) {
+      // Calculate average shift needed for the sampled pins in this channel
+      const avgCurrentHue = samples.reduce((acc, m) => acc + m.hsl.h, 0) / samples.length;
+      const rawHueShift = angleDiff(avgCurrentHue, closestTarget);
+      
+      // In Lightroom HSL sliders, -100 to +100 corresponds to approx -30° to +30° shift
+      // Scale: rawHueShift * (100 / 30) clamped to [-100, 100]
+      const lrHueShift = Math.max(-100, Math.min(100, Math.round(rawHueShift * 3.33)));
+
+      // If the channel is close to a target harmony angle, gently boost saturation to accent it
+      // If it is distant from all target harmony angles, desaturate slightly to clean up the palette
+      let satAdjust = 0;
+      let lumAdjust = 0;
+
+      if (minDiffToTarget <= 25) {
+        // Core harmony channel -> Enhance vibrancy and separation
+        satAdjust = Math.min(35, Math.max(8, Math.round((30 - minDiffToTarget) * 1.2)));
+        // Balanced luminance for clean photographic pop
+        lumAdjust = Math.round((50 - (samples.reduce((acc, m) => acc + m.hsl.l, 0) / samples.length)) * 0.25);
+      } else if (minDiffToTarget > 45) {
+        // Distracting rogue color outside harmony -> Clean up by desaturating
+        satAdjust = -Math.min(45, Math.round((minDiffToTarget - 35) * 0.8));
+      }
+
+      channelAdjustments[ch] = {
+        hue: lrHueShift,
+        saturation: Math.max(-100, Math.min(100, satAdjust)),
+        luminance: Math.max(-100, Math.min(100, lumAdjust))
+      };
+    } else {
+      // Unsampled channel: gently align toward closest harmony pole or neutralize
+      if (minDiffToTarget <= 20) {
+        const rawShift = angleDiff(centerHue, closestTarget);
+        channelAdjustments[ch] = {
+          hue: Math.max(-100, Math.min(100, Math.round(rawShift * 2.5))),
+          saturation: 5,
+          luminance: 0
+        };
+      } else if (minDiffToTarget > 60) {
+        // Distant color family: pull saturation down slightly to maintain disciplined palette harmony
+        channelAdjustments[ch] = {
+          hue: 0,
+          saturation: -18,
+          luminance: 0
+        };
+      }
+    }
+  });
+
+  // 3. Calculate 3-Way Split Toning / Color Grading from sampled highlights, midtones, and shadows
+  // Sort sampled markers by lightness
+  const sortedByLightness = [...markers].sort((a, b) => a.hsl.l - b.hsl.l);
+  const shadowSample = sortedByLightness.find(m => m.hsl.l <= 35) || sortedByLightness[0];
+  const highlightSample = [...sortedByLightness].reverse().find(m => m.hsl.l >= 65) || sortedByLightness[sortedByLightness.length - 1];
+  const midtoneSample = sortedByLightness.find(m => m.hsl.l > 35 && m.hsl.l < 65) || sortedByLightness[Math.floor(sortedByLightness.length / 2)];
+
+  // Calculate Highlight grading hue (derived from primary tone or sampled highlight)
+  let highlightHue = primaryHue;
+  let shadowHue = (primaryHue + 180) % 360;
+  let midtoneHue = primaryHue;
+
+  if (rule.includes('complementary')) {
+    highlightHue = highlightSample ? highlightSample.hsl.h : primaryHue;
+    shadowHue = (highlightHue + 180) % 360;
+    midtoneHue = (highlightHue + 15) % 360;
+  } else if (rule.includes('split-complementary')) {
+    highlightHue = primaryHue;
+    shadowHue = (primaryHue + 150) % 360;
+    midtoneHue = (primaryHue + 210) % 360;
+  } else if (rule.includes('analogous')) {
+    highlightHue = (primaryHue + 15) % 360;
+    shadowHue = (primaryHue - 15 + 360) % 360;
+    midtoneHue = primaryHue;
+  } else if (rule.includes('triadic')) {
+    highlightHue = primaryHue;
+    shadowHue = (primaryHue + 120) % 360;
+    midtoneHue = (primaryHue + 240) % 360;
+  }
+
+  // Calculate grading saturation strengths (subtle, filmic photographic ranges)
+  const shadowSat = shadowSample ? Math.min(28, Math.max(8, Math.round(shadowSample.hsl.s * 0.35))) : 14;
+  const highlightSat = highlightSample ? Math.min(24, Math.max(6, Math.round(highlightSample.hsl.s * 0.30))) : 12;
+  const midtoneSat = midtoneSample ? Math.min(18, Math.max(4, Math.round(midtoneSample.hsl.s * 0.20))) : 8;
+
+  // Calculate subtle luminance separation based on sampled dynamic range
+  const shadowLum = (shadowSample && shadowSample.hsl.l < 25) ? -4 : 0;
+  const highlightLum = (highlightSample && highlightSample.hsl.l > 75) ? 3 : 0;
+  const midtoneLum = 0;
+
+  const colorGrading: LightroomThreeWayGrading = {
+    shadowHue: Math.round(shadowHue),
+    shadowSat,
+    shadowLum,
+    midtoneHue: Math.round(midtoneHue),
+    midtoneSat,
+    midtoneLum,
+    highlightHue: Math.round(highlightHue),
+    highlightSat,
+    highlightLum,
+    blending: 55,
+    balance: 0
+  };
+
+  // 4. Calculate Global Vibrance & Saturation from sampled colors
+  // Muted/neutral scenes receive a gentle vibrance boost to lift subtle chromas cleanly.
+  // Saturated scenes receive controlled saturation roll-off (-5 to -10) to prevent digital clipping in Lightroom.
+  const avgSampleSat = markers.length > 0 
+    ? markers.reduce((sum, m) => sum + m.hsl.s, 0) / markers.length 
+    : 45;
+
+  let calculatedVibrance = 8;
+  let calculatedSaturation = -4;
+
+  if (avgSampleSat < 25) {
+    calculatedVibrance = 14;
+    calculatedSaturation = -2;
+  } else if (avgSampleSat < 50) {
+    calculatedVibrance = 9;
+    calculatedSaturation = -5;
+  } else if (avgSampleSat < 75) {
+    calculatedVibrance = 5;
+    calculatedSaturation = -8;
+  } else {
+    calculatedVibrance = 2;
+    calculatedSaturation = -12;
+  }
+
+  const cleanPresetName = presetName || `Photo Harmony - ${harmonyRule} (${Math.round(primaryHue)}°)`;
+
+  return {
+    name: cleanPresetName,
+    harmonyRule,
+    primaryHue,
+    vibrance: calculatedVibrance,
+    saturation: calculatedSaturation,
+    hsl: channelAdjustments,
+    colorGrading,
+    description: `Lightroom .xmp preset calculated from sampled photo colors enforcing ${harmonyRule} harmony with D65 white-balance discipline.`
+  };
+};
+
+// Generate standard Adobe Camera Raw / Lightroom Classic .xmp preset XML
+// Strictly contains HSL color mixer, 3-way color grading, and calculated global vibrance/saturation.
+// Zero changes to exposure, white balance, crop, sharpening, or noise reduction.
+export const generateLightroomXmpPreset = (preset: LightroomPreset): string => {
+  const { hsl, colorGrading, name, harmonyRule, primaryHue, vibrance, saturation } = preset;
+  const dateStr = new Date().toISOString();
+  
+  // Format numeric values with explicit +/- signs where conventional in ACR presets
+  const formatSigned = (val: number): string => (val > 0 ? `+${val}` : `${val}`);
+
+  // RFC4122 v4 formatted UUID for Lightroom preset catalog indexing
+  const generateUuid = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = (Math.random() * 16) | 0;
+      const v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16).toUpperCase();
+    });
+  };
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000 1.000000, 0000/00/00-00:00:00">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description rdf:about=""
+    xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+    crs:PresetType="Normal"
+    crs:Cluster=""
+    crs:UUID="${generateUuid()}"
+    crs:SupportsAmount="True"
+    crs:Amount="1.0"
+    crs:Name="${name}"
+    crs:Description="Photo Color Harmony Lab - ${harmonyRule} (Primary Hue: ${primaryHue}°)"
+    crs:Date="${dateStr}"
+    crs:HasSettings="True"
+    crs:Version="16.0"
+    crs:ProcessVersion="15.4"
+    crs:Vibrance="${formatSigned(vibrance)}"
+    crs:Saturation="${formatSigned(saturation)}"
+    
+    <!-- Lightroom HSL / Color Mixer: Hue Shifts (-100 to +100) -->
+    crs:HueAdjustmentRed="${hsl.red.hue}"
+    crs:HueAdjustmentOrange="${hsl.orange.hue}"
+    crs:HueAdjustmentYellow="${hsl.yellow.hue}"
+    crs:HueAdjustmentGreen="${hsl.green.hue}"
+    crs:HueAdjustmentAqua="${hsl.aqua.hue}"
+    crs:HueAdjustmentBlue="${hsl.blue.hue}"
+    crs:HueAdjustmentPurple="${hsl.purple.hue}"
+    crs:HueAdjustmentMagenta="${hsl.magenta.hue}"
+    
+    <!-- Lightroom HSL / Color Mixer: Saturation Adjustments (-100 to +100) -->
+    crs:SaturationAdjustmentRed="${hsl.red.saturation}"
+    crs:SaturationAdjustmentOrange="${hsl.orange.saturation}"
+    crs:SaturationAdjustmentYellow="${hsl.yellow.saturation}"
+    crs:SaturationAdjustmentGreen="${hsl.green.saturation}"
+    crs:SaturationAdjustmentAqua="${hsl.aqua.saturation}"
+    crs:SaturationAdjustmentBlue="${hsl.blue.saturation}"
+    crs:SaturationAdjustmentPurple="${hsl.purple.saturation}"
+    crs:SaturationAdjustmentMagenta="${hsl.magenta.saturation}"
+    
+    <!-- Lightroom HSL / Color Mixer: Luminance Adjustments (-100 to +100) -->
+    crs:LuminanceAdjustmentRed="${hsl.red.luminance}"
+    crs:LuminanceAdjustmentOrange="${hsl.orange.luminance}"
+    crs:LuminanceAdjustmentYellow="${hsl.yellow.luminance}"
+    crs:LuminanceAdjustmentGreen="${hsl.green.luminance}"
+    crs:LuminanceAdjustmentAqua="${hsl.aqua.luminance}"
+    crs:LuminanceAdjustmentBlue="${hsl.blue.luminance}"
+    crs:LuminanceAdjustmentPurple="${hsl.purple.luminance}"
+    crs:LuminanceAdjustmentMagenta="${hsl.magenta.luminance}"
+    
+    <!-- Lightroom 3-Way Color Grading: Shadows, Midtones, Highlights -->
+    crs:ColorGradeShadowHue="${colorGrading.shadowHue}"
+    crs:ColorGradeShadowSat="${colorGrading.shadowSat}"
+    crs:ColorGradeShadowLum="${colorGrading.shadowLum}"
+    crs:ColorGradeMidtoneHue="${colorGrading.midtoneHue}"
+    crs:ColorGradeMidtoneSat="${colorGrading.midtoneSat}"
+    crs:ColorGradeMidtoneLum="${colorGrading.midtoneLum}"
+    crs:ColorGradeHighlightHue="${colorGrading.highlightHue}"
+    crs:ColorGradeHighlightSat="${colorGrading.highlightSat}"
+    crs:ColorGradeHighlightLum="${colorGrading.highlightLum}"
+    crs:ColorGradeBlending="${colorGrading.blending}"
+    crs:ColorGradeBalance="${colorGrading.balance}"
+    crs:ColorGradeGlobalHue="0"
+    crs:ColorGradeGlobalSat="0"
+    crs:ColorGradeGlobalLum="0">
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>`;
 };
 
 // CIELAB Color Conversion and Perceptual Difference (CIE76 / D65)
