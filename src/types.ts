@@ -92,3 +92,6 @@ export interface AutoAnalysisResult {
   avgSaturation: number;
   recommendedScheme: string;
 }
+
+export type PhotographicMatte = 'gray50' | 'neutralDark' | 'charcoal' | 'black';
+export type WorkspaceTheme = 'neutralGray' | 'gray50Studio' | 'darkSlate';

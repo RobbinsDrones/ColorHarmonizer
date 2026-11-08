@@ -2,5 +2,7 @@
   "name": "Photo Color Harmony Lab & PowerShell Converter",
   "description": "Interactive photo color analyzer, 2D color wheel harmony evaluator, and PowerShell (pwsh) to EXE local desktop converter.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

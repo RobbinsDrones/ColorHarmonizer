@@ -1,1 +1,156 @@
 @import "tailwindcss";
+
+/* ==========================================================================
+   Photographic Eye & Calibrated Neutral Gray Workspaces
+   Eliminates simultaneous contrast and chromatic adaptation bias (D65 standard)
+   ========================================================================== */
+
+/* --- 1. 50% Studio Gray Mode (Photographic 18% Reflectance Card Standard) --- */
+[data-theme="gray50Studio"] {
+  background-color: #585858 !important;
+  color: #f5f5f5 !important;
+}
+
+[data-theme="gray50Studio"] header {
+  background-color: rgba(45, 45, 45, 0.95) !important;
+  border-color: #555555 !important;
+}
+
+[data-theme="gray50Studio"] footer {
+  background-color: rgba(38, 38, 38, 0.95) !important;
+  border-color: #505050 !important;
+  color: #b5b5b5 !important;
+}
+
+[data-theme="gray50Studio"] .bg-slate-950 {
+  background-color: #2a2a2a !important;
+}
+
+[data-theme="gray50Studio"] .bg-slate-900 {
+  background-color: #363636 !important;
+}
+
+[data-theme="gray50Studio"] .bg-slate-900\/90,
+[data-theme="gray50Studio"] .bg-slate-900\/95,
+[data-theme="gray50Studio"] .bg-slate-900\/98 {
+  background-color: rgba(54, 54, 54, 0.96) !important;
+}
+
+[data-theme="gray50Studio"] .bg-slate-950\/80,
+[data-theme="gray50Studio"] .bg-slate-950\/70,
+[data-theme="gray50Studio"] .bg-slate-950\/90 {
+  background-color: rgba(40, 40, 40, 0.90) !important;
+}
+
+[data-theme="gray50Studio"] .bg-slate-800 {
+  background-color: #444444 !important;
+}
+
+[data-theme="gray50Studio"] .bg-slate-800\/90,
+[data-theme="gray50Studio"] .bg-slate-800\/80,
+[data-theme="gray50Studio"] .bg-slate-800\/50 {
+  background-color: rgba(68, 68, 68, 0.85) !important;
+}
+
+[data-theme="gray50Studio"] .hover\:bg-slate-800:hover,
+[data-theme="gray50Studio"] .hover\:bg-slate-700:hover {
+  background-color: #505050 !important;
+}
+
+[data-theme="gray50Studio"] .border-slate-800,
+[data-theme="gray50Studio"] .border-slate-800\/80,
+[data-theme="gray50Studio"] .border-slate-800\/50,
+[data-theme="gray50Studio"] .border-slate-700 {
+  border-color: #525252 !important;
+}
+
+[data-theme="gray50Studio"] .text-slate-100 {
+  color: #ffffff !important;
+}
+
+[data-theme="gray50Studio"] .text-slate-200 {
+  color: #eeeeee !important;
+}
+
+[data-theme="gray50Studio"] .text-slate-300 {
+  color: #dddddd !important;
+}
+
+[data-theme="gray50Studio"] .text-slate-400 {
+  color: #c4c4c4 !important;
+}
+
+[data-theme="gray50Studio"] .text-slate-500 {
+  color: #a8a8a8 !important;
+}
+
+[data-theme="gray50Studio"] .text-slate-600 {
+  color: #8c8c8c !important;
+}
+
+/* --- 2. Neutral Dark Mode (Lightroom / DaVinci Resolve Zero-Chroma Standard) --- */
+[data-theme="neutralGray"] {
+  background-color: #121212 !important;
+  color: #f4f4f5 !important;
+}
+
+[data-theme="neutralGray"] header {
+  background-color: rgba(24, 24, 24, 0.95) !important;
+  border-color: #2c2c2c !important;
+}
+
+[data-theme="neutralGray"] footer {
+  background-color: rgba(18, 18, 18, 0.95) !important;
+  border-color: #262626 !important;
+  color: #71717a !important;
+}
+
+[data-theme="neutralGray"] .bg-slate-950 {
+  background-color: #161616 !important;
+}
+
+[data-theme="neutralGray"] .bg-slate-900 {
+  background-color: #1e1e1e !important;
+}
+
+[data-theme="neutralGray"] .bg-slate-900\/90,
+[data-theme="neutralGray"] .bg-slate-900\/95,
+[data-theme="neutralGray"] .bg-slate-900\/98 {
+  background-color: rgba(30, 30, 30, 0.96) !important;
+}
+
+[data-theme="neutralGray"] .bg-slate-950\/80,
+[data-theme="neutralGray"] .bg-slate-950\/70,
+[data-theme="neutralGray"] .bg-slate-950\/90 {
+  background-color: rgba(20, 20, 20, 0.90) !important;
+}
+
+[data-theme="neutralGray"] .bg-slate-800 {
+  background-color: #292929 !important;
+}
+
+[data-theme="neutralGray"] .bg-slate-800\/90,
+[data-theme="neutralGray"] .bg-slate-800\/80,
+[data-theme="neutralGray"] .bg-slate-800\/50 {
+  background-color: rgba(41, 41, 41, 0.85) !important;
+}
+
+[data-theme="neutralGray"] .hover\:bg-slate-800:hover,
+[data-theme="neutralGray"] .hover\:bg-slate-700:hover {
+  background-color: #383838 !important;
+}
+
+[data-theme="neutralGray"] .border-slate-800,
+[data-theme="neutralGray"] .border-slate-800\/80,
+[data-theme="neutralGray"] .border-slate-800\/50,
+[data-theme="neutralGray"] .border-slate-700 {
+  border-color: #2e2e2e !important;
+}
+
+[data-theme="neutralGray"] .text-slate-400 {
+  color: #a1a1aa !important;
+}
+
+[data-theme="neutralGray"] .text-slate-500 {
+  color: #71717a !important;
+}

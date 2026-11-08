@@ -1,9 +1,9 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ColorMarker } from '../types';
+import { ColorMarker, PhotographicMatte } from '../types';
 import { rgbToHex, rgbToHsl } from '../utils/colorUtils';
 import { 
   Target, RefreshCw, ZoomIn, ZoomOut, Maximize2, Crosshair, 
-  Trash2, Sparkles, Check, Copy 
+  Trash2, Sparkles, Check, Copy, Eye, Square
 } from 'lucide-react';
 
 interface PhotoSamplerProps {
@@ -20,6 +20,7 @@ interface PhotoSamplerProps {
   onSetSamplingMode: (mode: 'manual' | 'auto') => void;
   onTriggerAutoExtract: () => void;
   isAnalyzingAuto: boolean;
+  initialMatte?: PhotographicMatte;
 }
 
 export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
@@ -35,10 +36,22 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
   samplingMode,
   onSetSamplingMode,
   onTriggerAutoExtract,
-  isAnalyzingAuto
+  isAnalyzingAuto,
+  initialMatte = 'gray50'
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+
+  // Photographic Canvas Matte & Calibration State
+  const [canvasMatte, setCanvasMatte] = useState<PhotographicMatte>(initialMatte);
+  const [showNeutralFrame, setShowNeutralFrame] = useState<boolean>(true);
+
+  // Sync canvas matte when initialMatte prop changes (e.g., from top surround theme switcher)
+  useEffect(() => {
+    if (initialMatte) {
+      setCanvasMatte(initialMatte);
+    }
+  }, [initialMatte]);
 
   // Loupe & Zoom state
   const [zoom, setZoom] = useState(1);
@@ -224,12 +237,82 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Photographic 50% / 18% Gray Surround Matte Switcher */}
+          <div className="flex items-center bg-slate-950/90 border border-slate-800 rounded-lg p-0.5 text-xs">
+            <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold pl-1.5 pr-1 flex items-center gap-1">
+              <Eye className="w-3 h-3 text-amber-400" />
+              <span>Matte:</span>
+            </span>
+            <button
+              onClick={() => setCanvasMatte('gray50')}
+              className={`px-2 py-1 rounded text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer ${
+                canvasMatte === 'gray50'
+                  ? 'bg-[#808080] text-black shadow font-bold'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="50% Neutral Gray (18% Reflectance Card Standard - Optical Neutral Anchor)"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-[#808080] border border-slate-600 inline-block" />
+              <span>50% Gray</span>
+            </button>
+            <button
+              onClick={() => setCanvasMatte('neutralDark')}
+              className={`px-2 py-1 rounded text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer ${
+                canvasMatte === 'neutralDark'
+                  ? 'bg-neutral-700 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Lightroom Dark Neutral (#262626)"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-[#262626] border border-slate-600 inline-block" />
+              <span>Dark</span>
+            </button>
+            <button
+              onClick={() => setCanvasMatte('charcoal')}
+              className={`px-2 py-1 rounded text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer ${
+                canvasMatte === 'charcoal'
+                  ? 'bg-neutral-800 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Neutral Charcoal (#181818)"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-[#181818] border border-slate-600 inline-block" />
+              <span>Charcoal</span>
+            </button>
+            <button
+              onClick={() => setCanvasMatte('black')}
+              className={`px-2 py-1 rounded text-[11px] font-semibold transition-all flex items-center gap-1 cursor-pointer ${
+                canvasMatte === 'black'
+                  ? 'bg-black text-white shadow ring-1 ring-neutral-700'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Deep Black (#0a0a0a)"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-[#0a0a0a] border border-slate-600 inline-block" />
+              <span>Black</span>
+            </button>
+          </div>
+
+          {/* Toggle 18% Neutral Frame Around Photo */}
+          <button
+            onClick={() => setShowNeutralFrame(prev => !prev)}
+            className={`px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 border transition-all cursor-pointer ${
+              showNeutralFrame
+                ? 'bg-[#808080]/20 text-[#d4d4d8] border-[#808080]/60 shadow-sm'
+                : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:text-slate-200'
+            }`}
+            title="Toggle 18% Neutral Gray Frame directly surrounding photograph for white-balance reference"
+          >
+            <Square className="w-3 h-3 text-[#808080]" />
+            <span className="text-[11px]">18% Frame</span>
+          </button>
+
           {/* Quick Auto Extract Palette Trigger */}
           <button
             onClick={onTriggerAutoExtract}
             disabled={isAnalyzingAuto}
-            className="bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+            className="bg-slate-800 hover:bg-slate-700 text-amber-300 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
             title="Scan photo pixels and auto-extract dominant palette"
           >
             <Sparkles className={`w-3.5 h-3.5 ${isAnalyzingAuto ? 'animate-spin' : ''}`} />
@@ -241,7 +324,7 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
             <button
               onClick={() => setZoom(prev => Math.max(1, prev - 0.25))}
               disabled={zoom <= 1}
-              className="p-1 hover:text-white disabled:opacity-30 transition-colors"
+              className="p-1 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
               title="Zoom Out"
             >
               <ZoomOut className="w-3.5 h-3.5" />
@@ -252,7 +335,7 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
             <button
               onClick={() => setZoom(prev => Math.min(2.5, prev + 0.25))}
               disabled={zoom >= 2.5}
-              className="p-1 hover:text-white disabled:opacity-30 transition-colors"
+              className="p-1 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
               title="Zoom In"
             >
               <ZoomIn className="w-3.5 h-3.5" />
@@ -260,7 +343,7 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
             {zoom > 1 && (
               <button
                 onClick={() => setZoom(1)}
-                className="px-1.5 py-0.5 text-[10px] text-indigo-400 hover:text-indigo-300 font-medium"
+                className="px-1.5 py-0.5 text-[10px] text-indigo-400 hover:text-indigo-300 font-medium cursor-pointer"
                 title="Reset Zoom"
               >
                 Reset
@@ -268,31 +351,53 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
             )}
           </div>
 
-          <div className="text-xs text-slate-400 bg-slate-800 px-2.5 py-1 rounded-full border border-slate-700">
+          <div className="text-xs text-slate-400 bg-slate-800/90 px-2.5 py-1 rounded-full border border-slate-700">
             Pins: <span className="text-indigo-400 font-semibold">{markers.length}</span>/12
           </div>
         </div>
       </div>
 
-      {/* Main Viewport Container */}
+      {/* Main Viewport Container with Photographic Matte Surround */}
       <div
         ref={containerRef}
         onMouseMove={handleMouseMove}
         onMouseLeave={handleMouseLeave}
         onClick={handleImageClick}
-        className="relative flex-1 min-h-[380px] md:min-h-[480px] bg-slate-950 rounded-xl overflow-hidden border border-slate-800/80 flex items-center justify-center cursor-crosshair group select-none"
+        style={{
+          backgroundColor: 
+            canvasMatte === 'gray50' ? '#7f7f7f' :
+            canvasMatte === 'neutralDark' ? '#262626' :
+            canvasMatte === 'charcoal' ? '#181818' : '#0a0a0a'
+        }}
+        className="relative flex-1 min-h-[380px] md:min-h-[480px] rounded-xl overflow-hidden border border-neutral-700/80 shadow-inner flex items-center justify-center cursor-crosshair group select-none transition-colors duration-200"
       >
+        {/* Subtle 50% Gray Calibration Indicator watermark */}
+        {canvasMatte === 'gray50' && (
+          <div className="absolute top-2.5 left-3 text-[10px] font-mono tracking-widest uppercase text-neutral-900/60 pointer-events-none font-bold">
+            Studio 50% Neutral Gray Matte (18% Reflectance D65)
+          </div>
+        )}
+
         <div 
           className="relative transition-transform duration-100 ease-out flex items-center justify-center max-h-full max-w-full"
           style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
         >
-          <img
-            ref={imageRef}
-            src={imageSrc}
-            alt="Analysis Subject"
-            className="max-h-[540px] w-full object-contain pointer-events-auto block"
-            crossOrigin="anonymous"
-          />
+          {/* Calibrated 18% Neutral Gray Frame Container */}
+          <div
+            className={`transition-all duration-200 ${
+              showNeutralFrame 
+                ? 'p-2.5 md:p-3.5 bg-[#808080] shadow-2xl rounded-sm ring-1 ring-black/40 ring-offset-1 ring-offset-black/20' 
+                : ''
+            }`}
+          >
+            <img
+              ref={imageRef}
+              src={imageSrc}
+              alt="Analysis Subject"
+              className="max-h-[520px] w-full object-contain pointer-events-auto block shadow-md"
+              crossOrigin="anonymous"
+            />
+          </div>
 
           {/* Positioned Pins on Photo */}
           {markers.map((marker) => {

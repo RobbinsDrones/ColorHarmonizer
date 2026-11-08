@@ -7,9 +7,9 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Palette, Upload, Sparkles, Sliders, Zap, Target, ArrowRight, 
   Terminal, Download, Copy, Check, RefreshCw, Layers, ExternalLink,
-  Info, Cpu, ShieldCheck, HelpCircle
+  Info, Cpu, ShieldCheck, HelpCircle, Eye
 } from 'lucide-react';
-import { ColorMarker, HarmonyRule, AutoAnalysisResult, DominantColor } from './types';
+import { ColorMarker, HarmonyRule, AutoAnalysisResult, DominantColor, WorkspaceTheme } from './types';
 import { 
   analyzeColorHarmony, calculateNudgeSuggestions, rgbToHex, rgbToHsl, extractPhotoColorsAndTones 
 } from './utils/colorUtils';
@@ -27,6 +27,16 @@ const DEFAULT_PHOTO_URL = 'https://images.unsplash.com/photo-1503899036084-c55cd
 export default function App() {
   // Navigation State: 'studio' | 'powershell'
   const [appMode, setAppMode] = useState<'studio' | 'powershell'>('studio');
+
+  // Photographic Workspace Theme: 'gray50Studio' | 'neutralGray' | 'darkSlate'
+  const [workspaceTheme, setWorkspaceTheme] = useState<WorkspaceTheme>(() => {
+    return (localStorage.getItem('photo_lab_theme') as WorkspaceTheme) || 'gray50Studio';
+  });
+
+  const handleSetWorkspaceTheme = (theme: WorkspaceTheme) => {
+    setWorkspaceTheme(theme);
+    localStorage.setItem('photo_lab_theme', theme);
+  };
 
   // Photo & Color Markers State
   const [imageSrc, setImageSrc] = useState<string>(DEFAULT_PHOTO_URL);
@@ -179,10 +189,19 @@ export default function App() {
   }, [markers, activeHarmonyRule, detectedHarmony.primaryHue]);
 
   return (
-    <div className="flex flex-col min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-indigo-500 selection:text-white">
+    <div 
+      data-theme={workspaceTheme}
+      className={`flex flex-col min-h-screen font-sans antialiased selection:bg-indigo-500 selection:text-white transition-colors duration-200 ${
+        workspaceTheme === 'gray50Studio'
+          ? 'bg-[#585858] text-[#f5f5f5]'
+          : workspaceTheme === 'neutralGray'
+          ? 'bg-[#121212] text-[#f4f4f5]'
+          : 'bg-slate-950 text-slate-100'
+      }`}
+    >
       
       {/* Top Application Header */}
-      <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-40 px-4 md:px-6 py-3.5 flex flex-wrap justify-between items-center gap-4 shadow-lg">
+      <header className="border-b border-slate-800 bg-slate-900/90 backdrop-blur sticky top-0 z-40 px-4 md:px-6 py-3 flex flex-wrap justify-between items-center gap-4 shadow-lg">
         
         {/* Brand & Mode Switcher */}
         <div className="flex items-center space-x-4">
@@ -206,7 +225,7 @@ export default function App() {
           </div>
 
           {/* Mode Switcher Buttons */}
-          <div className="hidden lg:flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 ml-4">
+          <div className="hidden lg:flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 ml-2">
             <button
               onClick={() => setAppMode('studio')}
               className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
@@ -234,9 +253,53 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right Header Controls */}
-        <div className="flex items-center space-x-3">
+        {/* Right Header Controls: Photographic Surround Switcher & Actions */}
+        <div className="flex items-center flex-wrap gap-2 sm:gap-3">
           
+          {/* Photographic Eye Surround Theme Switcher */}
+          <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+            <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 px-2 flex items-center gap-1.5" title="Calibrated surround color to eliminate chromatic adaptation bias">
+              <Eye className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden xl:inline">Surround:</span>
+            </span>
+            <button
+              onClick={() => handleSetWorkspaceTheme('gray50Studio')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                workspaceTheme === 'gray50Studio'
+                  ? 'bg-[#808080] text-black shadow-md font-bold'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="50% Neutral Gray (18% Reflectance Card Standard - Optical Neutral Anchor)"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-[#808080] border border-black/40 inline-block" />
+              <span>50% Gray</span>
+            </button>
+            <button
+              onClick={() => handleSetWorkspaceTheme('neutralGray')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                workspaceTheme === 'neutralGray'
+                  ? 'bg-[#2b2b2b] text-white shadow-md ring-1 ring-[#444444]'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Lightroom / DaVinci Neutral Dark (#121212, zero chromatic bias)"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-[#242424] border border-[#555555] inline-block" />
+              <span>Neutral</span>
+            </button>
+            <button
+              onClick={() => handleSetWorkspaceTheme('darkSlate')}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                workspaceTheme === 'darkSlate'
+                  ? 'bg-slate-800 text-white shadow-md'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+              title="Deep Slate Blue UI (#020617)"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-[#0f172a] border border-slate-600 inline-block" />
+              <span>Slate</span>
+            </button>
+          </div>
+
           {/* Mobile Mode Switcher Toggle */}
           <div className="flex lg:hidden items-center bg-slate-950 p-1 rounded-lg border border-slate-800">
             <button
@@ -253,7 +316,7 @@ export default function App() {
                 appMode === 'powershell' ? 'bg-cyan-600 text-white' : 'text-slate-400'
               }`}
             >
-              pwsh / EXE
+              pwsh
             </button>
           </div>
 
@@ -289,6 +352,20 @@ export default function App() {
             
             {/* Left Column: Interactive Photo Sampler, Auto Color Analyzer, and Palette Cards (7 cols) */}
             <div className="lg:col-span-7 flex flex-col space-y-5">
+              {/* Photographic Calibration Active Indicator */}
+              {workspaceTheme === 'gray50Studio' && (
+                <div className="bg-[#383838] border border-[#525252] rounded-xl px-3.5 py-2 text-xs flex items-center justify-between shadow-xs">
+                  <div className="flex items-center space-x-2 text-[#e0e0e0]">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#808080] border border-black/40 shrink-0" />
+                    <span className="font-semibold text-white">50% Neutral Gray Environment Active</span>
+                    <span className="text-[#a8a8a8] hidden sm:inline">• 18% Reflectance D65 Standard (Zero Simultaneous Contrast Bias)</span>
+                  </div>
+                  <span className="text-[10px] font-mono uppercase bg-[#282828] text-amber-300 px-2 py-0.5 rounded border border-[#484848] font-bold">
+                    D65 Calibrated
+                  </span>
+                </div>
+              )}
+
               <PhotoSampler
                 imageSrc={imageSrc}
                 markers={markers}
@@ -303,6 +380,7 @@ export default function App() {
                 onSetSamplingMode={setSamplingMode}
                 onTriggerAutoExtract={() => runAutoAnalysis(imageSrc, autoClusterCount)}
                 isAnalyzingAuto={isAnalyzingAuto}
+                initialMatte={workspaceTheme === 'gray50Studio' ? 'gray50' : 'neutralDark'}
               />
 
               {/* Auto Color Picker & Tonal Analysis Panel */}
