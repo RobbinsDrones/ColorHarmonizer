@@ -30,7 +30,7 @@ export default function App() {
 
   // Photographic Workspace Theme: 'gray50Studio' | 'neutralGray' | 'darkSlate'
   const [workspaceTheme, setWorkspaceTheme] = useState<WorkspaceTheme>(() => {
-    return (localStorage.getItem('photo_lab_theme') as WorkspaceTheme) || 'gray50Studio';
+    return (localStorage.getItem('photo_lab_theme') as WorkspaceTheme) || 'darkSlate';
   });
 
   const handleSetWorkspaceTheme = (theme: WorkspaceTheme) => {

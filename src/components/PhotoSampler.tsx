@@ -37,7 +37,7 @@ export const PhotoSampler: React.FC<PhotoSamplerProps> = ({
   onSetSamplingMode,
   onTriggerAutoExtract,
   isAnalyzingAuto,
-  initialMatte = 'gray50'
+  initialMatte = 'neutralDark'
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
