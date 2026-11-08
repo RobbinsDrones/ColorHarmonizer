@@ -707,26 +707,48 @@ export const extractPhotoColorsAndTones = (
   // Calculate percentage share among chosen palette
   const sumCount = selected.reduce((acc, curr) => acc + curr.count, 0) || effectivePixels;
 
-  // Photographic Color Name Generator using both HSL and RGB range / CIELAB chroma
-  // (immune to extreme-lightness HSL denominator singularity)
+  // Photographic Color Name Generator using both HSL, RGB range, and CIELAB chroma
+  // Distinguishes deep rich chromatic tones (e.g. burgundy, espresso, navy, olive) from true neutral black
   const getColorName = (hsl: HslColor, r: number, g: number, b: number, chroma: number): string => {
     const { h, s, l } = hsl;
     const maxVal = Math.max(r, g, b);
     const minVal = Math.min(r, g, b);
     const rgbRange = maxVal - minVal;
 
-    // Neutrals
-    if (l < 15) return 'Deep Shadow / Black';
-    if (l <= 25 && (rgbRange <= 18 || chroma <= 12)) return 'Charcoal / Onyx';
+    // 1. Extreme Highlights & Off-Whites (L >= 75)
     if (l >= 90 && (rgbRange <= 18 || chroma <= 10)) return 'Crisp White';
     if (l >= 78 && (rgbRange <= 30 || chroma <= 18)) {
       if (h >= 25 && h <= 65) return 'Ivory / Cream';
       return 'Off-White / Pearl';
     }
-    if (rgbRange <= 18 || chroma <= 12) return l > 55 ? 'Platinum / Light Gray' : 'Neutral Gray';
-    if (rgbRange <= 32 && l >= 50 && h >= 20 && h <= 60) return 'Warm Sand / Taupe';
 
-    // Chromatics
+    // 2. Pure Black vs Deep Chromatic Shadows (L <= 24)
+    // A tone is chromatic if it has saturation, visible RGB spread, or CIELAB chroma
+    const isChromaticDark = (s >= 35 || rgbRange >= 15 || chroma >= 14);
+    if (l <= 7 && !isChromaticDark) return 'Pitch Black / Deep Shadow';
+    if (l <= 20 && !isChromaticDark) return l <= 14 ? 'Deep Shadow / Black' : 'Charcoal / Onyx';
+
+    // Deep Chromatic Tones (L <= 24 with rich hue/saturation, like #470302 or #160F08)
+    if (l <= 24 && isChromaticDark) {
+      if (h >= 345 || h < 15) return s > 65 ? 'Deep Burgundy / Crimson' : 'Dark Maroon / Russet';
+      if (h >= 15 && h < 45) return s >= 35 ? 'Deep Espresso / Dark Umber' : 'Dark Chestnut / Warm Shadow';
+      if (h >= 45 && h < 70) return 'Deep Olive / Dark Bronze';
+      if (h >= 70 && h < 165) return 'Dark Forest Green / Pine';
+      if (h >= 165 && h < 195) return 'Deep Teal / Dark Cyan';
+      if (h >= 195 && h < 255) return 'Midnight Navy / Deep Indigo';
+      if (h >= 255 && h < 290) return 'Deep Plum / Dark Eggplant';
+      if (h >= 290 && h < 345) return 'Dark Wine / Berry';
+    }
+
+    // 3. Midtone Neutrals (S <= 18% or low rgbRange / chroma)
+    if (rgbRange <= 18 || chroma <= 12 || s <= 14) {
+      if (l <= 25) return 'Charcoal / Slate';
+      if (l > 58) return 'Platinum / Light Gray';
+      return 'Neutral Gray';
+    }
+    if (rgbRange <= 32 && l >= 45 && h >= 20 && h <= 60 && s <= 25) return 'Warm Sand / Taupe';
+
+    // 4. Midtone Chromatics (L > 24)
     if (h >= 345 || h < 15) return s > 60 ? 'Crimson Red' : 'Rust Terracotta';
     if (h >= 15 && h < 45) return s > 60 ? 'Vivid Amber / Orange' : 'Warm Ochre';
     if (h >= 45 && h < 70) return s > 60 ? 'Golden Yellow' : 'Soft Khaki';
