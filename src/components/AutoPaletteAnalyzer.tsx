@@ -164,6 +164,8 @@ export const AutoPaletteAnalyzer: React.FC<AutoPaletteAnalyzerProps> = ({
                       ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                       : color.significanceType === 'Deep Shadow'
                       ? 'bg-slate-800 text-slate-300 border-slate-700'
+                      : color.significanceType === 'Subject Neutral'
+                      ? 'bg-teal-500/15 text-teal-300 border-teal-500/30'
                       : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
                   }`}>
                     {color.significanceType}

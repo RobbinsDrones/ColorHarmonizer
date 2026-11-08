@@ -52,7 +52,7 @@ export default function App() {
   const [samplingMode, setSamplingMode] = useState<'manual' | 'auto'>('manual');
   const [autoAnalysis, setAutoAnalysis] = useState<AutoAnalysisResult | null>(null);
   const [isAnalyzingAuto, setIsAnalyzingAuto] = useState<boolean>(false);
-  const [autoClusterCount, setAutoClusterCount] = useState<number>(6);
+  const [autoClusterCount, setAutoClusterCount] = useState<number>(5);
 
   // Load and analyze photo using balanced dominant + visually significant extraction
   const loadAndAnalyzePhoto = (url: string, count: number = autoClusterCount, autoPopulatePins: boolean = true) => {

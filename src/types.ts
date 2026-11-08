@@ -69,7 +69,7 @@ export interface DominantColor {
   toneCategory: 'Highlight' | 'Midtone' | 'Shadow' | 'Vibrant Accent' | 'Muted Neutral';
   sampleX: number; // estimated coordinate % on photo
   sampleY: number; // estimated coordinate % on photo
-  significanceType?: 'Dominant Base' | 'Vibrant Accent' | 'Key Highlight' | 'Deep Shadow' | 'Harmonic Tone';
+  significanceType?: 'Dominant Base' | 'Vibrant Accent' | 'Key Highlight' | 'Deep Shadow' | 'Harmonic Tone' | 'Subject Neutral';
   significanceScore?: number;
 }
 

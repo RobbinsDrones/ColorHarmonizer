@@ -264,49 +264,101 @@ export const calculateNudgeSuggestions = (
   });
 };
 
-// Auto Color & Tone Extraction Algorithm
+// CIELAB Color Conversion and Perceptual Difference (CIE76 / D65)
+export interface LabColor {
+  l: number; // 0 to 100
+  a: number; // -128 to +127
+  b: number; // -128 to +127
+}
+
+export const rgbToLab = (r: number, g: number, b: number): LabColor => {
+  // 1. sRGB gamma to linear
+  let rLin = r / 255;
+  let gLin = g / 255;
+  let bLin = b / 255;
+
+  rLin = rLin > 0.04045 ? Math.pow((rLin + 0.055) / 1.055, 2.4) : rLin / 12.92;
+  gLin = gLin > 0.04045 ? Math.pow((gLin + 0.055) / 1.055, 2.4) : gLin / 12.92;
+  bLin = bLin > 0.04045 ? Math.pow((bLin + 0.055) / 1.055, 2.4) : bLin / 12.92;
+
+  // 2. Linear RGB to CIE XYZ (D65 standard)
+  const x = (rLin * 0.4124564 + gLin * 0.3575761 + bLin * 0.1804375) / 0.95047;
+  const y = (rLin * 0.2126729 + gLin * 0.7151522 + bLin * 0.0721750) / 1.00000;
+  const z = (rLin * 0.0193339 + gLin * 0.1191920 + bLin * 0.9503041) / 1.08883;
+
+  // 3. XYZ to CIELAB
+  const fx = x > 0.008856 ? Math.cbrt(x) : 7.787 * x + 16 / 116;
+  const fy = y > 0.008856 ? Math.cbrt(y) : 7.787 * y + 16 / 116;
+  const fz = z > 0.008856 ? Math.cbrt(z) : 7.787 * z + 16 / 116;
+
+  const l = Math.max(0, 116 * fy - 16);
+  const aVal = 500 * (fx - fy);
+  const bVal = 200 * (fy - fz);
+
+  return { l, a: aVal, b: bVal };
+};
+
+export const deltaE = (c1: LabColor, c2: LabColor): number => {
+  const dl = c1.l - c2.l;
+  const da = c1.a - c2.a;
+  const db = c1.b - c2.b;
+  return Math.sqrt(dl * dl + da * da + db * db);
+};
+
 // Auto Color & Tone Extraction Algorithm:
 // Balances dominant overall pixel distribution with visually significant colors
-// (such as clothing, flowers, animals, prominent subjects, and high-chroma accents)
-// while preventing duplicate/nearly identical shades.
+// (including low-saturation neutrals like white, ivory, cream, gray, and black,
+// prominent subjects/clothing/wildlife, and distinctive accents)
+// while strictly avoiding selecting multiple nearly identical shades.
 export const extractPhotoColorsAndTones = (
-  img: HTMLImageElement,
-  targetCount: number = 6
+  img: HTMLImageElement | { width: number; height: number; data: Uint8ClampedArray | number[] },
+  targetCount: number = 5
 ): AutoAnalysisResult => {
-  const canvas = document.createElement('canvas');
-  // Scale down to 180px on the longest side to preserve fine prominent subjects
-  // (flowers, clothing items, eyes, accessories, neon signs) without performance lag
-  const maxDim = 180;
-  const naturalW = img.naturalWidth || img.width || 800;
-  const naturalH = img.naturalHeight || img.height || 600;
-  const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
-  const w = Math.max(40, Math.floor(naturalW * scale));
-  const h = Math.max(40, Math.floor(naturalH * scale));
-  canvas.width = w;
-  canvas.height = h;
+  let data: Uint8ClampedArray | number[];
+  let w: number;
+  let h: number;
 
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return {
-      dominantColors: [],
-      tones: { highlight: null, midtone: null, shadow: null, vibrant: null, muted: null },
-      temperature: 'Balanced Neutral',
-      temperatureScore: 0,
-      contrastLevel: 'Balanced Contrast',
-      contrastRatio: 1,
-      saturationLevel: 'Natural Richness',
-      avgSaturation: 50,
-      recommendedScheme: 'Standard Balance'
-    };
+  if ('data' in img && 'width' in img && 'height' in img) {
+    data = img.data;
+    w = img.width;
+    h = img.height;
+  } else {
+    const canvas = document.createElement('canvas');
+    // Scale down to 200px on the longest side to preserve fine prominent subjects
+    // (clothing details, flowers, animals, accessories, highlights) without performance lag
+    const maxDim = 200;
+    const naturalW = img.naturalWidth || img.width || 800;
+    const naturalH = img.naturalHeight || img.height || 600;
+    const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
+    w = Math.max(40, Math.floor(naturalW * scale));
+    h = Math.max(40, Math.floor(naturalH * scale));
+    canvas.width = w;
+    canvas.height = h;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return {
+        dominantColors: [],
+        tones: { highlight: null, midtone: null, shadow: null, vibrant: null, muted: null },
+        temperature: 'Balanced Neutral',
+        temperatureScore: 0,
+        contrastLevel: 'Balanced Contrast',
+        contrastRatio: 1,
+        saturationLevel: 'Natural Richness',
+        avgSaturation: 50,
+        recommendedScheme: 'Standard Balance'
+      };
+    }
+
+    ctx.drawImage(img as HTMLImageElement, 0, 0, w, h);
+    const imgData = ctx.getImageData(0, 0, w, h);
+    data = imgData.data;
   }
 
-  ctx.drawImage(img, 0, 0, w, h);
-  const imgData = ctx.getImageData(0, 0, w, h);
-  const data = imgData.data;
   const totalPixels = w * h;
 
   // Step 1: Bucket pixels by quantized 15-bit color (5 bits per channel)
-  // and compute global image statistics (mean RGB, mean lightness, mean saturation)
+  // and compute global image statistics
   interface BucketData {
     rSum: number;
     gSum: number;
@@ -357,30 +409,10 @@ export const extractPhotoColorsAndTones = (
   }
 
   const effectivePixels = validPixelCount || totalPixels;
-  const meanR = totalR / effectivePixels;
-  const meanG = totalG / effectivePixels;
-  const meanB = totalB / effectivePixels;
-  const meanHsl = rgbToHsl(Math.round(meanR), Math.round(meanG), Math.round(meanB));
-
-  // Step 2: Perceptual distance function that accounts for weighted RGB and chromatic hue separation
-  const perceptualDist = (
-    c1: { r: number; g: number; b: number; hsl: HslColor },
-    c2: { r: number; g: number; b: number; hsl: HslColor }
-  ) => {
-    const dr = c1.r - c2.r;
-    const dg = c1.g - c2.g;
-    const db = c1.b - c2.b;
-    // Human eye luminance sensitivity weights (Rec. 601)
-    const rgbDist = Math.sqrt(dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114);
-
-    // If both colors have chromatic saturation, hue difference matters significantly
-    if (c1.hsl.s > 18 && c2.hsl.s > 18 && c1.hsl.l > 12 && c2.hsl.l > 12 && c1.hsl.l < 92 && c2.hsl.l < 92) {
-      const hDiff = Math.abs(angleDiff(c1.hsl.h, c2.hsl.h)); // 0 - 180
-      const hueWeight = (hDiff / 180) * 42;
-      return rgbDist * 0.72 + hueWeight;
-    }
-    return rgbDist;
-  };
+  const meanR = Math.round(totalR / effectivePixels);
+  const meanG = Math.round(totalG / effectivePixels);
+  const meanB = Math.round(totalB / effectivePixels);
+  const meanLab = rgbToLab(meanR, meanG, meanB);
 
   interface CandidateCluster {
     r: number;
@@ -390,6 +422,8 @@ export const extractPhotoColorsAndTones = (
     y: number;
     hex: string;
     hsl: HslColor;
+    lab: LabColor;
+    chroma: number; // CIELAB chroma sqrt(a^2 + b^2)
     count: number;
     weight: number;
     dominanceScore: number;
@@ -397,8 +431,8 @@ export const extractPhotoColorsAndTones = (
     compositeScore: number;
   }
 
-  // Convert buckets to preliminary clusters, filtering out single-pixel sensor noise
-  const minNoiseThreshold = Math.max(4, Math.floor(effectivePixels * 0.0006));
+  // Convert buckets to preliminary clusters, filtering out single-pixel sensor noise (< 0.04%)
+  const minNoiseThreshold = Math.max(3, Math.floor(effectivePixels * 0.0004));
   const rawClusters = Array.from(buckets.values())
     .filter(b => b.count >= minNoiseThreshold)
     .map(b => {
@@ -409,8 +443,10 @@ export const extractPhotoColorsAndTones = (
       const y = Number((b.ySum / b.count).toFixed(1));
       const hex = rgbToHex(r, g, bCol);
       const hsl = rgbToHsl(r, g, bCol);
+      const lab = rgbToLab(r, g, bCol);
+      const chroma = Math.sqrt(lab.a * lab.a + lab.b * lab.b);
       return {
-        r, g, b: bCol, x, y, hex, hsl,
+        r, g, b: bCol, x, y, hex, hsl, lab, chroma,
         count: b.count,
         weight: b.count,
         dominanceScore: 0,
@@ -422,12 +458,23 @@ export const extractPhotoColorsAndTones = (
   // Sort raw clusters initially by count
   rawClusters.sort((a, b) => b.count - a.count);
 
-  // Step 3: Initial fine merge to group micro-shades (avoid fragmentation)
+  // Perceptual distance function combining CIELAB DeltaE and chromatic hue separation
+  const perceptualColorDist = (c1: CandidateCluster, c2: CandidateCluster): number => {
+    const dLab = deltaE(c1.lab, c2.lab);
+    // If both colors have chromatic saturation, hue difference across sectors is significant
+    if (c1.hsl.s > 18 && c2.hsl.s > 18 && c1.hsl.l > 12 && c2.hsl.l > 12 && c1.hsl.l < 90 && c2.hsl.l < 90) {
+      const hDiff = Math.abs(angleDiff(c1.hsl.h, c2.hsl.h)); // 0 - 180
+      return dLab * 0.75 + (hDiff / 180) * 32;
+    }
+    return dLab;
+  };
+
+  // Step 2: Preliminary merge of micro-shades (avoid fragmentation of identical gradients)
   const merged: CandidateCluster[] = [];
   for (const cand of rawClusters) {
     let matched = false;
     for (const m of merged) {
-      if (perceptualDist(cand, m) < 18) {
+      if (deltaE(cand.lab, m.lab) < 10) {
         // Merge into existing cluster
         const totalCount = m.count + cand.count;
         m.r = Math.round((m.r * m.count + cand.r * cand.count) / totalCount);
@@ -437,6 +484,8 @@ export const extractPhotoColorsAndTones = (
         m.y = Number(((m.y * m.count + cand.y * cand.count) / totalCount).toFixed(1));
         m.hex = rgbToHex(m.r, m.g, m.b);
         m.hsl = rgbToHsl(m.r, m.g, m.b);
+        m.lab = rgbToLab(m.r, m.g, m.b);
+        m.chroma = Math.sqrt(m.lab.a * m.lab.a + m.lab.b * m.lab.b);
         m.count = totalCount;
         m.weight = totalCount;
         matched = true;
@@ -448,53 +497,73 @@ export const extractPhotoColorsAndTones = (
     }
   }
 
-  // Step 4: Compute Visual Prominence & Dominance Scores for each cluster
-  // Combines:
-  // - Dominance (pixel count with square-root dampening so massive backgrounds don't drown out key subjects)
-  // - Chromatic Vibrancy (saturation and chromatic purity: flowers, clothing, signs, animals)
-  // - Contrast against Image Mean (pops out against environmental background)
-  // - Tonal Keynotes (highlight / shadow dynamic boundaries)
+  // Step 3: Compute Visual Saliency & Dominance Scores for each cluster
+  // Balanced to evaluate:
+  // - Dominance (pixel frequency curve)
+  // - Neutral Subject Importance (white/ivory/cream clothing, gray stone/suits, black shadows)
+  // - Chromatic Vibrancy (colorful flowers, plumage, ribbons, signs)
+  // - Contrast from ambient scene average (pops out of background)
+  // - Subject spatial composition (center/rule-of-thirds concentration)
   for (const c of merged) {
     const pFrac = c.count / effectivePixels;
+
     // 1. Dominance score: dampened power curve
-    c.dominanceScore = Math.min(1, Math.sqrt(pFrac) * 1.6);
+    c.dominanceScore = Math.min(1.0, Math.sqrt(pFrac) * 1.7);
 
-    // 2. Chromatic Vibrancy score
-    const satNorm = c.hsl.s / 100;
-    // Midtones have maximum pure chroma impact; extreme dark or white lacks pure hue
-    const lightnessCenterFactor = 1 - Math.min(1, Math.abs(c.hsl.l - 50) / 52);
-    const chromaImpact = Math.pow(satNorm, 1.25) * Math.pow(Math.max(0.1, lightnessCenterFactor), 0.5);
+    // 2. Contrast against overall scene ambient color
+    const dFromMean = deltaE(c.lab, meanLab);
+    const contrastScore = Math.min(1.0, dFromMean / 58);
 
-    // 3. Contrast against average background color
-    const distFromMean = perceptualDist(c, { r: meanR, g: meanG, b: meanB, hsl: meanHsl });
-    const contrastImpact = Math.min(1, distFromMean / 130);
-
-    // 4. Subject prominence factor:
-    // A small cluster (e.g. 0.5% - 5%) that is vibrant or highly contrasting represents a distinct subject
-    // (clothing, flowers, animals, signs, architectural details)
-    let subjectBoost = 0;
-    if (c.hsl.s >= 35 && pFrac >= 0.002 && pFrac <= 0.20) {
-      subjectBoost = (c.hsl.s / 100) * 0.45;
+    // 3. Highlight / Clean Neutral Score (White, Ivory, Cream, Snow, Light Petals, Bright Clothing)
+    // CRITICAL: Low saturation colors like white, ivory, and cream are NOT deprioritized!
+    let highlightScore = 0;
+    if (c.hsl.l >= 75) {
+      const lWeight = Math.min(1.0, (c.hsl.l - 72) / 26);
+      const presFactor = pFrac >= 0.008 ? 1.3 : 1.0;
+      highlightScore = Math.min(1.0, lWeight * presFactor);
     }
 
-    // 5. Dynamic range boundary (highlight / shadow)
-    let tonalExtreme = 0;
-    if (c.hsl.l >= 82) tonalExtreme = ((c.hsl.l - 82) / 18) * 0.3;
-    else if (c.hsl.l <= 16) tonalExtreme = ((16 - c.hsl.l) / 16) * 0.3;
+    // 4. Deep Shadow / Anchor Tone Score (Black, Dark Charcoal, Deep Shadow)
+    let shadowScore = 0;
+    if (c.hsl.l <= 22) {
+      const shWeight = Math.min(1.0, (24 - c.hsl.l) / 20);
+      const presFactor = pFrac >= 0.008 ? 1.2 : 1.0;
+      shadowScore = Math.min(1.0, shWeight * presFactor);
+    }
 
-    c.saliencyScore = Math.min(1, chromaImpact * 0.45 + contrastImpact * 0.25 + subjectBoost * 0.20 + tonalExtreme * 0.10);
+    // 5. Chromatic Vibrancy / Accent Score (Flowers, plumage, lipstick, ribbons, neon)
+    const chromaScore = Math.min(1.0, c.chroma / 50);
 
-    // Composite Score: 38% Dominance + 62% Visual Saliency / Subject Prominence
+    // 6. Neutral Ground / Midtone Neutral Score (Gray, Slate, Taupe fabric, stone)
+    let neutralScore = 0;
+    if (c.hsl.s <= 18 && c.hsl.l > 25 && c.hsl.l < 75 && pFrac >= 0.012) {
+      neutralScore = 0.65;
+    }
+
+    // 7. Spatial Focus / Subject Placement (Centrally composed subjects in middle 15% - 85% of frame)
+    const inSubjectZone = c.x >= 15 && c.x <= 85 && c.y >= 15 && c.y <= 85;
+    const spatialScore = inSubjectZone ? 1.0 : 0.6;
+
+    // Primary salient trait: can be an intense chroma OR a prominent neutral highlight/shadow
+    const primaryFeature = Math.max(chromaScore, highlightScore, shadowScore, neutralScore);
+
+    // Unified Visual Saliency
+    c.saliencyScore = Math.min(
+      1.0,
+      primaryFeature * 0.48 + contrastScore * 0.38 + spatialScore * 0.14
+    );
+
+    // Composite Score: 38% Dominance + 62% Visual Saliency
     c.compositeScore = c.dominanceScore * 0.38 + c.saliencyScore * 0.62;
   }
 
-  // Step 5: Multi-Role Diverse Palette Selection (MMR / Maximal Marginal Relevance)
-  // Avoids selecting multiple nearly identical shades and preserves distinct accents!
+  // Step 4: Multi-Role Diverse Palette Selection (MMR with Strict Separation)
+  // Balances environmental dominant colors with visually significant subject colors
+  // and avoids selecting multiple nearly identical shades!
   const selected: CandidateCluster[] = [];
-  const selectedTypes: Array<'Dominant Base' | 'Vibrant Accent' | 'Key Highlight' | 'Deep Shadow' | 'Harmonic Tone'> = [];
+  const selectedTypes: Array<'Dominant Base' | 'Vibrant Accent' | 'Key Highlight' | 'Deep Shadow' | 'Harmonic Tone' | 'Subject Neutral'> = [];
 
-  // Slot 1: Primary Environmental Dominant Base
-  // Find the cluster with highest count that has broad presence
+  // Slot 1: Primary Environmental Dominant Base (Background, foliage, sky, or major ground plane)
   const sortedByCount = [...merged].sort((a, b) => b.count - a.count);
   const primaryDominant = sortedByCount[0];
   if (primaryDominant) {
@@ -502,19 +571,59 @@ export const extractPhotoColorsAndTones = (
     selectedTypes.push('Dominant Base');
   }
 
-  // Slot 2: Primary Visual Subject / Vibrant Accent
-  // Pick the most visually salient / vibrant cluster that is perceptually distinct from the dominant base
-  const sortedBySaliency = [...merged]
-    .filter(c => selected.every(s => perceptualDist(c, s) >= 32))
+  // Slot 2: Primary Visual Subject / Distinct Focal Color
+  // Pick the highest saliency candidate that is perceptually distinct from Slot 1 (deltaE >= 28)
+  // (e.g. white clothing, ivory dress, vivid flower, animal fur, or bright object)
+  const candidateSubjects = [...merged]
+    .filter(c => selected.every(s => perceptualColorDist(c, s) >= 28))
     .sort((a, b) => b.saliencyScore - a.saliencyScore);
 
-  if (sortedBySaliency.length > 0 && sortedBySaliency[0].hsl.s >= 25) {
-    selected.push(sortedBySaliency[0]);
-    selectedTypes.push('Vibrant Accent');
+  if (candidateSubjects.length > 0) {
+    const topSubject = candidateSubjects[0];
+    selected.push(topSubject);
+    let role: typeof selectedTypes[0] = 'Harmonic Tone';
+    if (topSubject.hsl.l >= 78) role = 'Key Highlight';
+    else if (topSubject.hsl.l <= 20) role = 'Deep Shadow';
+    else if (topSubject.chroma >= 38 || topSubject.hsl.s >= 55) role = 'Vibrant Accent';
+    else if (topSubject.hsl.s <= 18) role = 'Subject Neutral';
+    else role = 'Dominant Base';
+    selectedTypes.push(role);
   }
 
-  // Slots 3 to targetCount: Iterative Diverse Selection with Distance Penalties
-  // Strictly avoids selecting nearly identical shades (min distance threshold 26)
+  // Slot 3: Complementary Subject / Accent / Neutral Counterpart
+  // If Slot 2 was a neutral (e.g. white dress, gray suit, black jacket), look for the most vibrant accent!
+  // If Slot 2 was a chromatic color, look for the most prominent neutral highlight or shadow!
+  const hasNeutralSoFar = selected.some(s => s.hsl.s <= 22 || s.hsl.l >= 78 || s.hsl.l <= 20);
+  const hasVibrantSoFar = selected.some(s => s.chroma >= 35 || s.hsl.s >= 50);
+
+  let targetRoleForSlot3: 'accent' | 'neutral' | 'diverse' = 'diverse';
+  if (hasNeutralSoFar && !hasVibrantSoFar) targetRoleForSlot3 = 'accent';
+  else if (hasVibrantSoFar && !hasNeutralSoFar) targetRoleForSlot3 = 'neutral';
+
+  let slot3Candidate: CandidateCluster | null = null;
+  if (targetRoleForSlot3 === 'accent') {
+    slot3Candidate = [...merged]
+      .filter(c => selected.every(s => perceptualColorDist(c, s) >= 25))
+      .filter(c => c.chroma >= 25 || c.hsl.s >= 35)
+      .sort((a, b) => (b.chroma * 0.6 + b.saliencyScore * 40) - (a.chroma * 0.6 + a.saliencyScore * 40))[0] || null;
+  } else if (targetRoleForSlot3 === 'neutral') {
+    slot3Candidate = [...merged]
+      .filter(c => selected.every(s => perceptualColorDist(c, s) >= 25))
+      .filter(c => c.hsl.l >= 76 || c.hsl.l <= 22 || c.hsl.s <= 18)
+      .sort((a, b) => b.saliencyScore - a.saliencyScore)[0] || null;
+  }
+
+  if (slot3Candidate) {
+    selected.push(slot3Candidate);
+    let role: typeof selectedTypes[0] = 'Harmonic Tone';
+    if (slot3Candidate.hsl.l >= 78) role = 'Key Highlight';
+    else if (slot3Candidate.hsl.l <= 20) role = 'Deep Shadow';
+    else if (slot3Candidate.chroma >= 38 || slot3Candidate.hsl.s >= 55) role = 'Vibrant Accent';
+    else if (slot3Candidate.hsl.s <= 18) role = 'Subject Neutral';
+    selectedTypes.push(role);
+  }
+
+  // Slots 4 to targetCount: Maximal Marginal Relevance (MMR) with Strict Avoidance of Duplicate Shades
   while (selected.length < targetCount && selected.length < merged.length) {
     let bestCand: CandidateCluster | null = null;
     let bestScore = -Infinity;
@@ -522,16 +631,12 @@ export const extractPhotoColorsAndTones = (
     for (const cand of merged) {
       if (selected.some(s => s.hex === cand.hex)) continue;
 
-      // Distance to closest already selected color
-      const minDist = Math.min(...selected.map(s => perceptualDist(cand, s)));
+      const minDist = Math.min(...selected.map(s => perceptualColorDist(cand, s)));
 
-      // If nearly identical to an existing selection (< 26), reject it
-      if (minDist < 26) continue;
+      // Strict avoidance of nearly identical shades (minimum separation threshold deltaE 23)
+      if (minDist < 23) continue;
 
-      // Distance diversity factor: favors colors that explore fresh areas of the color wheel
-      const diversityFactor = Math.min(1.4, Math.max(0.2, minDist / 42));
-
-      // Calculate MMR utility
+      const diversityFactor = Math.min(1.4, Math.max(0.3, minDist / 38));
       const utility = cand.compositeScore * diversityFactor;
 
       if (utility > bestScore) {
@@ -540,12 +645,12 @@ export const extractPhotoColorsAndTones = (
       }
     }
 
+    // If threshold was too strict to fill target count, slightly relax threshold to 16
     if (!bestCand) {
-      // If threshold was too strict, lower threshold slightly to fill slots
       for (const cand of merged) {
         if (selected.some(s => s.hex === cand.hex)) continue;
-        const minDist = Math.min(...selected.map(s => perceptualDist(cand, s)));
-        if (minDist >= 18) {
+        const minDist = Math.min(...selected.map(s => perceptualColorDist(cand, s)));
+        if (minDist >= 16) {
           bestCand = cand;
           break;
         }
@@ -554,56 +659,76 @@ export const extractPhotoColorsAndTones = (
 
     if (!bestCand) break;
 
-    // Determine type for this selected candidate
-    let role: 'Dominant Base' | 'Vibrant Accent' | 'Key Highlight' | 'Deep Shadow' | 'Harmonic Tone' = 'Harmonic Tone';
-    if (bestCand.hsl.s >= 55) {
-      role = 'Vibrant Accent';
-    } else if (bestCand.hsl.l >= 78) {
-      role = 'Key Highlight';
-    } else if (bestCand.hsl.l <= 18) {
-      role = 'Deep Shadow';
-    } else if (bestCand.count / effectivePixels > 0.18) {
-      role = 'Dominant Base';
-    }
+    let role: typeof selectedTypes[0] = 'Harmonic Tone';
+    if (bestCand.hsl.l >= 78) role = 'Key Highlight';
+    else if (bestCand.hsl.l <= 20) role = 'Deep Shadow';
+    else if (bestCand.chroma >= 38 || bestCand.hsl.s >= 55) role = 'Vibrant Accent';
+    else if (bestCand.hsl.s <= 18) role = 'Subject Neutral';
+    else if (bestCand.count / effectivePixels > 0.16) role = 'Dominant Base';
 
     selected.push(bestCand);
     selectedTypes.push(role);
   }
 
-  // Guarantee Tonal Range Check:
-  // If the photograph has a prominent highlight or shadow not yet represented, ensure balance
-  const hasHighlight = selected.some(s => s.hsl.l >= 72);
-  const candidateHighlight = merged.find(c => c.hsl.l >= 75 && c.count >= effectivePixels * 0.003 && selected.every(s => perceptualDist(c, s) >= 22));
-  if (!hasHighlight && candidateHighlight && selected.length >= targetCount) {
-    const replaceIdx = selected.findIndex((_, idx) => selectedTypes[idx] === 'Harmonic Tone');
-    if (replaceIdx !== -1) {
-      selected[replaceIdx] = candidateHighlight;
-      selectedTypes[replaceIdx] = 'Key Highlight';
+  // Step 5: Tonal Range & Distinctive Accent Safety Check
+  // 1. If photo has a prominent clean highlight (white/ivory/cream >= 0.6% area) not yet in palette:
+  const hasHighlight = selected.some(s => s.hsl.l >= 75);
+  const candHighlight = merged.find(c => c.hsl.l >= 78 && (c.count / effectivePixels) >= 0.006 && selected.every(s => perceptualColorDist(c, s) >= 20));
+  if (!hasHighlight && candHighlight && selected.length >= targetCount) {
+    const swapIdx = selected.findIndex((_, idx) => selectedTypes[idx] === 'Harmonic Tone');
+    if (swapIdx !== -1) {
+      selected[swapIdx] = candHighlight;
+      selectedTypes[swapIdx] = 'Key Highlight';
     }
   }
 
+  // 2. If photo has a prominent deep shadow (black/charcoal >= 0.6% area) not yet in palette:
   const hasShadow = selected.some(s => s.hsl.l <= 22);
-  const candidateShadow = merged.find(c => c.hsl.l <= 20 && c.count >= effectivePixels * 0.003 && selected.every(s => perceptualDist(c, s) >= 22));
-  if (!hasShadow && candidateShadow && selected.length >= targetCount) {
-    const replaceIdx = selected.findIndex((_, idx) => selectedTypes[idx] === 'Harmonic Tone');
-    if (replaceIdx !== -1) {
-      selected[replaceIdx] = candidateShadow;
-      selectedTypes[replaceIdx] = 'Deep Shadow';
+  const candShadow = merged.find(c => c.hsl.l <= 20 && (c.count / effectivePixels) >= 0.006 && selected.every(s => perceptualColorDist(c, s) >= 20));
+  if (!hasShadow && candShadow && selected.length >= targetCount) {
+    const swapIdx = selected.findIndex((_, idx) => selectedTypes[idx] === 'Harmonic Tone');
+    if (swapIdx !== -1) {
+      selected[swapIdx] = candShadow;
+      selectedTypes[swapIdx] = 'Deep Shadow';
+    }
+  }
+
+  // 3. Preserve distinctive accent colors, even when they occupy relatively small portions of the image (>= 0.2%)
+  const hasAccent = selected.some(s => s.chroma >= 35 || s.hsl.s >= 55);
+  const candAccent = merged.find(c => (c.chroma >= 38 || c.hsl.s >= 58) && (c.count / effectivePixels) >= 0.002 && selected.every(s => perceptualColorDist(c, s) >= 22));
+  if (!hasAccent && candAccent && selected.length >= targetCount) {
+    const swapIdx = selected.findIndex((_, idx) => selectedTypes[idx] === 'Harmonic Tone');
+    if (swapIdx !== -1) {
+      selected[swapIdx] = candAccent;
+      selectedTypes[swapIdx] = 'Vibrant Accent';
     }
   }
 
   // Calculate percentage share among chosen palette
   const sumCount = selected.reduce((acc, curr) => acc + curr.count, 0) || effectivePixels;
 
-  // Name Generator for colors
-  const getColorName = (hsl: HslColor): string => {
+  // Photographic Color Name Generator using both HSL and RGB range / CIELAB chroma
+  // (immune to extreme-lightness HSL denominator singularity)
+  const getColorName = (hsl: HslColor, r: number, g: number, b: number, chroma: number): string => {
     const { h, s, l } = hsl;
-    if (l < 15) return 'Deep Shadow';
-    if (l > 88 && s < 20) return 'Highlight White';
-    if (s < 12) return l > 50 ? 'Pale Gray' : 'Charcoal Slate';
+    const maxVal = Math.max(r, g, b);
+    const minVal = Math.min(r, g, b);
+    const rgbRange = maxVal - minVal;
 
+    // Neutrals
+    if (l < 15) return 'Deep Shadow / Black';
+    if (l <= 25 && (rgbRange <= 18 || chroma <= 12)) return 'Charcoal / Onyx';
+    if (l >= 90 && (rgbRange <= 18 || chroma <= 10)) return 'Crisp White';
+    if (l >= 78 && (rgbRange <= 30 || chroma <= 18)) {
+      if (h >= 25 && h <= 65) return 'Ivory / Cream';
+      return 'Off-White / Pearl';
+    }
+    if (rgbRange <= 18 || chroma <= 12) return l > 55 ? 'Platinum / Light Gray' : 'Neutral Gray';
+    if (rgbRange <= 32 && l >= 50 && h >= 20 && h <= 60) return 'Warm Sand / Taupe';
+
+    // Chromatics
     if (h >= 345 || h < 15) return s > 60 ? 'Crimson Red' : 'Rust Terracotta';
-    if (h >= 15 && h < 45) return s > 60 ? 'Vivid Amber / Orange' : 'Warm Sand Ochre';
+    if (h >= 15 && h < 45) return s > 60 ? 'Vivid Amber / Orange' : 'Warm Ochre';
     if (h >= 45 && h < 70) return s > 60 ? 'Golden Yellow' : 'Soft Khaki';
     if (h >= 70 && h < 165) return s > 60 ? 'Emerald Leaf Green' : 'Moss Olive';
     if (h >= 165 && h < 195) return s > 60 ? 'Electric Cyan' : 'Aqua Teal';
@@ -616,11 +741,12 @@ export const extractPhotoColorsAndTones = (
   const dominantColors: DominantColor[] = selected.map((c, i) => {
     const pct = Number(((c.count / sumCount) * 100).toFixed(1));
     let toneCategory: DominantColor['toneCategory'] = 'Midtone';
+    const rgbRange = Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b);
 
-    if (c.hsl.l >= 70) toneCategory = 'Highlight';
-    else if (c.hsl.l <= 30) toneCategory = 'Shadow';
-    else if (c.hsl.s >= 65) toneCategory = 'Vibrant Accent';
-    else if (c.hsl.s <= 22) toneCategory = 'Muted Neutral';
+    if (c.hsl.l >= 74) toneCategory = 'Highlight';
+    else if (c.hsl.l <= 24) toneCategory = 'Shadow';
+    else if (c.chroma >= 38 || (c.hsl.s >= 60 && rgbRange >= 45)) toneCategory = 'Vibrant Accent';
+    else if (c.hsl.s <= 20 || rgbRange <= 22 || c.chroma <= 12) toneCategory = 'Muted Neutral';
 
     return {
       id: i + 1,
@@ -629,7 +755,7 @@ export const extractPhotoColorsAndTones = (
       hsl: c.hsl,
       percentage: pct,
       pixelCount: c.count,
-      label: getColorName(c.hsl),
+      label: getColorName(c.hsl, c.r, c.g, c.b, c.chroma),
       toneCategory,
       sampleX: c.x,
       sampleY: c.y,
@@ -638,7 +764,7 @@ export const extractPhotoColorsAndTones = (
     };
   });
 
-  // Step 4: Extract Color Tones (Highlights, Midtones, Shadows, Vibrant, Muted)
+  // Step 6: Extract Color Tones (Highlights, Midtones, Shadows, Vibrant, Muted)
   let highlight: DominantColor | null = null;
   let shadow: DominantColor | null = null;
   let vibrant: DominantColor | null = null;
@@ -650,7 +776,7 @@ export const extractPhotoColorsAndTones = (
     highlight = [...dominantColors].sort((a, b) => b.hsl.l - a.hsl.l)[0];
     // Shadow = Lowest Lightness
     shadow = [...dominantColors].sort((a, b) => a.hsl.l - b.hsl.l)[0];
-    // Vibrant = Highest Saturation
+    // Vibrant = Highest Chroma/Saturation
     vibrant = [...dominantColors].sort((a, b) => b.hsl.s - a.hsl.s)[0];
     // Muted = Lowest Saturation
     muted = [...dominantColors].sort((a, b) => a.hsl.s - b.hsl.s)[0];
@@ -658,7 +784,7 @@ export const extractPhotoColorsAndTones = (
     midtone = [...dominantColors].sort((a, b) => Math.abs(a.hsl.l - 50) - Math.abs(b.hsl.l - 50))[0];
   }
 
-  // Step 5: Overall Photo Tonal & Scheme Analysis
+  // Step 7: Overall Photo Tonal & Scheme Analysis
   let warmScore = 0;
   let coolScore = 0;
   let totalSat = 0;
