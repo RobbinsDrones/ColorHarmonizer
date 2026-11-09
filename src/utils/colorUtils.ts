@@ -956,6 +956,24 @@ export const extractPhotoColorsAndTones = (
     selectedTypes.push('Dominant Base');
   }
 
+  // Slots 1b..N: Area Anchors
+  // Reserve roughly half of the palette for the colors that physically cover the most
+  // of the frame (e.g. the big mid-green foliage family, sky, ground), so that a vivid
+  // but tiny accent can never push a large color family out of a "dominant" palette.
+  // The remaining slots below are still filled by visual saliency (accents, highlights,
+  // shadows, subject neutrals).
+  const AREA_ANCHOR_FRACTION = 0.5;   // share of palette slots reserved for large-area colors
+  const ANCHOR_MIN_SEPARATION = 14;   // perceptual distance between anchors (looser than accents)
+  const anchorTarget = Math.max(2, Math.ceil(targetCount * AREA_ANCHOR_FRACTION));
+  for (const cand of sortedByCount) {
+    if (selected.length >= anchorTarget) break;
+    if (selected.some(s => s.hex === cand.hex)) continue;
+    if (selected.every(s => perceptualColorDist(cand, s) >= ANCHOR_MIN_SEPARATION)) {
+      selected.push(cand);
+      selectedTypes.push('Dominant Base');
+    }
+  }
+
   // Slot 2: Primary Visual Subject / Distinct Focal Color
   // Pick the highest saliency candidate that is perceptually distinct from Slot 1 (deltaE >= 28)
   // (e.g. white clothing, ivory dress, vivid flower, animal fur, or bright object)
@@ -963,7 +981,7 @@ export const extractPhotoColorsAndTones = (
     .filter(c => selected.every(s => perceptualColorDist(c, s) >= 28))
     .sort((a, b) => b.saliencyScore - a.saliencyScore);
 
-  if (candidateSubjects.length > 0) {
+  if (selected.length < targetCount && candidateSubjects.length > 0) {
     const topSubject = candidateSubjects[0];
     selected.push(topSubject);
     let role: typeof selectedTypes[0] = 'Harmonic Tone';
@@ -998,7 +1016,7 @@ export const extractPhotoColorsAndTones = (
       .sort((a, b) => b.saliencyScore - a.saliencyScore)[0] || null;
   }
 
-  if (slot3Candidate) {
+  if (selected.length < targetCount && slot3Candidate) {
     selected.push(slot3Candidate);
     let role: typeof selectedTypes[0] = 'Harmonic Tone';
     if (slot3Candidate.hsl.l >= 78) role = 'Key Highlight';
@@ -1089,8 +1107,37 @@ export const extractPhotoColorsAndTones = (
     }
   }
 
-  // Calculate percentage share among chosen palette
-  const sumCount = selected.reduce((acc, curr) => acc + curr.count, 0) || effectivePixels;
+  // True area coverage: assign EVERY pixel bucket to its perceptually nearest palette color,
+  // so percentages are the real share of the photo (they sum to 100%) rather than a share
+  // of only the handful of selected clusters. Swatch hex values stay as the representative
+  // cluster colors so pins still land on real pixels.
+  const coverage: number[] = new Array(selected.length).fill(0);
+  let assignedTotal = 0;
+  for (const bkt of buckets.values()) {
+    const bl = rgbToLab(
+      Math.round(bkt.rSum / bkt.count),
+      Math.round(bkt.gSum / bkt.count),
+      Math.round(bkt.bSum / bkt.count)
+    );
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < selected.length; i++) {
+      const d = deltaE(bl, selected[i].lab);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+    coverage[bestIdx] += bkt.count;
+    assignedTotal += bkt.count;
+  }
+  const sumCount = assignedTotal || effectivePixels;
+
+  // Order the palette by true coverage (largest first) so the proportion bar and the
+  // "Photo Dominant Palette" strip read in order of how much of the photo each color covers.
+  const order = selected.map((_, i) => i).sort((a, b) => coverage[b] - coverage[a]);
+  const selectedSorted = order.map(i => selected[i]);
+  const typesSorted = order.map(i => selectedTypes[i]);
+  const coverageSorted = order.map(i => coverage[i]);
+  selected.splice(0, selected.length, ...selectedSorted);
+  selectedTypes.splice(0, selectedTypes.length, ...typesSorted);
 
   // Photographic Color Name Generator using both HSL, RGB range, and CIELAB chroma
   // Distinguishes deep rich chromatic tones (e.g. burgundy, espresso, navy, olive) from true neutral black
@@ -1109,7 +1156,7 @@ export const extractPhotoColorsAndTones = (
 
     // 2. Pure Black vs Deep Chromatic Shadows (L <= 24)
     // A tone is chromatic if it has saturation, visible RGB spread, or CIELAB chroma
-    const isChromaticDark = (s >= 35 || rgbRange >= 15 || chroma >= 14);
+    const isChromaticDark = (s >= 35 || rgbRange >= 12 || chroma >= 8);
     if (l <= 7 && !isChromaticDark) return 'Pitch Black / Deep Shadow';
     if (l <= 20 && !isChromaticDark) return l <= 14 ? 'Deep Shadow / Black' : 'Charcoal / Onyx';
 
@@ -1146,7 +1193,7 @@ export const extractPhotoColorsAndTones = (
   };
 
   const dominantColors: DominantColor[] = selected.map((c, i) => {
-    const pct = Number(((c.count / sumCount) * 100).toFixed(1));
+    const pct = Number(((coverageSorted[i] / sumCount) * 100).toFixed(1));
     let toneCategory: DominantColor['toneCategory'] = 'Midtone';
     const rgbRange = Math.max(c.r, c.g, c.b) - Math.min(c.r, c.g, c.b);
 
@@ -1161,7 +1208,7 @@ export const extractPhotoColorsAndTones = (
       rgb: { r: c.r, g: c.g, b: c.b },
       hsl: c.hsl,
       percentage: pct,
-      pixelCount: c.count,
+      pixelCount: coverageSorted[i],
       label: getColorName(c.hsl, c.r, c.g, c.b, c.chroma),
       toneCategory,
       sampleX: c.x,
@@ -1198,7 +1245,8 @@ export const extractPhotoColorsAndTones = (
 
   dominantColors.forEach(c => {
     const h = c.hsl.h;
-    const isWarm = (h >= 0 && h <= 75) || h >= 330;
+    // Warm = red through yellow-orange. Yellow-greens (hue ~60-90) are foliage, not warm light.
+    const isWarm = (h >= 0 && h <= 60) || h >= 330;
     const isCool = h >= 140 && h <= 270;
     if (isWarm) warmScore += c.percentage;
     if (isCool) coolScore += c.percentage;
