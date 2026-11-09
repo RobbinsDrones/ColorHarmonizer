@@ -4,7 +4,7 @@
     Cross-Platform PowerShell (pwsh) Edition (Windows, macOS, Linux)
 .DESCRIPTION
     Launches a lightweight, embedded local web server via System.Net.HttpListener
-    that hosts the portable Photo Color Analysis & Harmony Lab locally with zero external
+    that hosts the full React Photo Color Analysis & Harmony Lab locally with zero external
     dependencies or Node.js required. Automatically opens your default web browser
     or Microsoft Edge in native standalone application mode (--app).
     
@@ -24,22 +24,39 @@ $hostUrl = "http://localhost:$Port/"
 Write-Host @"
 ========================================================================
    [+] Photo Color Analysis & Harmony Lab - Local Desktop Host
-   PowerShell / pwsh Local Host Engine
+   PowerShell / pwsh Full React Offline Engine
 ========================================================================
    - Listening on: $hostUrl
    - Cross-Platform: Windows, macOS, Linux pwsh
+   - Zero Dependencies: No Node.js, npm, or Python required
    - Press Ctrl+C in this terminal window to stop the server
 ========================================================================
 "@ -ForegroundColor Cyan
 
-# Locate offline HTML file
+# Locate web root containing full React app
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$htmlPath = Join-Path $scriptDir "ColorHarmonyLab-Offline.html"
 
-if (-not (Test-Path $htmlPath)) {
-    # If not in same folder, look in parent or current dir
-    $htmlPath = "ColorHarmonyLab-Offline.html"
+$potentialRoots = @(
+    (Join-Path $scriptDir "web"),
+    (Join-Path $scriptDir "dist"),
+    (Join-Path (Join-Path $scriptDir "..") "dist"),
+    $scriptDir
+)
+
+$webRoot = $null
+foreach ($pr in $potentialRoots) {
+    if (Test-Path (Join-Path $pr "index.html")) {
+        $webRoot = $pr
+        break
+    }
 }
+
+if ($null -eq $webRoot) {
+    # Fallback to offline HTML if web folder not yet built
+    $webRoot = $scriptDir
+}
+
+Write-Host "[+] Serving Web Root: $webRoot" -ForegroundColor Green
 
 # Start HttpListener
 $listener = New-Object System.Net.HttpListener
@@ -58,6 +75,32 @@ try {
     Write-Host "[+] Local HTTP Listener started on port $Port" -ForegroundColor Green
 }
 
+# Helper: Get MIME Content-Type from file extension
+function Get-MimeType([string]$filePath) {
+    $ext = [System.IO.Path]::GetExtension($filePath).ToLowerInvariant()
+    switch ($ext) {
+        ".html"   { return "text/html; charset=utf-8" }
+        ".htm"    { return "text/html; charset=utf-8" }
+        ".js"     { return "application/javascript; charset=utf-8" }
+        ".mjs"    { return "application/javascript; charset=utf-8" }
+        ".css"    { return "text/css; charset=utf-8" }
+        ".json"   { return "application/json; charset=utf-8" }
+        ".svg"    { return "image/svg+xml" }
+        ".png"    { return "image/png" }
+        ".jpg"    { return "image/jpeg" }
+        ".jpeg"   { return "image/jpeg" }
+        ".webp"   { return "image/webp" }
+        ".gif"    { return "image/gif" }
+        ".ico"    { return "image/x-icon" }
+        ".woff2"  { return "font/woff2" }
+        ".woff"   { return "font/woff" }
+        ".ttf"    { return "font/ttf" }
+        ".xmp"    { return "application/xml; charset=utf-8" }
+        ".xml"    { return "application/xml; charset=utf-8" }
+        default   { return "application/octet-stream" }
+    }
+}
+
 # Open browser or Edge App mode
 if (-not $NoBrowser) {
     Start-Sleep -Milliseconds 400
@@ -67,19 +110,37 @@ if (-not $NoBrowser) {
             "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
             "$env:LOCALAPPDATA\Microsoft\Edge\Application\msedge.exe"
         )
-        $edgeFound = $false
+        $chromePaths = @(
+            "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+            "$env:ProgramFiles (x86)\Google\Chrome\Application\chrome.exe",
+            "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+        )
+        $browserLaunched = $false
+
         if ($EdgeAppMode) {
             foreach ($ep in $edgePaths) {
                 if (Test-Path $ep) {
-                    Start-Process -FilePath $ep -ArgumentList "--app=$hostUrl", "--window-size=1280,840"
-                    $edgeFound = $true
+                    Start-Process -FilePath $ep -ArgumentList "--app=$hostUrl", "--window-size=1400,900"
+                    $browserLaunched = $true
                     Write-Host "[+] Launched Microsoft Edge in Standalone App Window Mode" -ForegroundColor Magenta
                     break
                 }
             }
+            if (-not $browserLaunched) {
+                foreach ($cp in $chromePaths) {
+                    if (Test-Path $cp) {
+                        Start-Process -FilePath $cp -ArgumentList "--app=$hostUrl", "--window-size=1400,900"
+                        $browserLaunched = $true
+                        Write-Host "[+] Launched Google Chrome in Standalone App Window Mode" -ForegroundColor Magenta
+                        break
+                    }
+                }
+            }
         }
-        if (-not $edgeFound) {
+
+        if (-not $browserLaunched) {
             Start-Process $hostUrl
+            Write-Host "[+] Opened in default web browser" -ForegroundColor Magenta
         }
     } elseif ($IsMacOS) {
         Start-Process "open" $hostUrl
@@ -96,23 +157,42 @@ try {
         $request = $context.Request
         $response = $context.Response
 
-        $urlPath = $request.Url.LocalPath
-        Write-Host "[$([DateTime]::Now.ToString('HH:mm:ss'))] HTTP $($request.HttpMethod) $urlPath" -ForegroundColor DarkGray
+        $urlPath = [System.Uri]::UnescapeDataString($request.Url.LocalPath.TrimStart('/'))
+        if ([string]::IsNullOrWhiteSpace($urlPath)) {
+            $urlPath = "index.html"
+        }
 
-        if (Test-Path $htmlPath) {
-            $bytes = [System.IO.File]::ReadAllBytes($htmlPath)
-            $response.ContentType = "text/html; charset=utf-8"
-            $response.ContentLength64 = $bytes.Length
-            $response.StatusCode = 200
-            $response.OutputStream.Write($bytes, 0, $bytes.Length)
+        $targetFile = Join-Path $webRoot $urlPath
+
+        # If file not found, try index.html for SPA routes or check for fallback
+        if (-not (Test-Path $targetFile -PathType Leaf)) {
+            $spaFallback = Join-Path $webRoot "index.html"
+            if (Test-Path $spaFallback) {
+                $targetFile = $spaFallback
+            } elseif (Test-Path (Join-Path $scriptDir "ColorHarmonyLab-Offline.html")) {
+                $targetFile = Join-Path $scriptDir "ColorHarmonyLab-Offline.html"
+            }
+        }
+
+        if (Test-Path $targetFile -PathType Leaf) {
+            try {
+                $bytes = [System.IO.File]::ReadAllBytes($targetFile)
+                $response.ContentType = Get-MimeType $targetFile
+                $response.ContentLength64 = $bytes.Length
+                $response.StatusCode = 200
+                $response.OutputStream.Write($bytes, 0, $bytes.Length)
+            } catch {
+                $response.StatusCode = 500
+            }
         } else {
-            $msg = "<h1>Photo Color Harmony Lab</h1><p>Embedded offline file not found at: $htmlPath</p>"
+            $msg = "<h1>Photo Color Harmony Lab</h1><p>File not found: $urlPath</p>"
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($msg)
-            $response.ContentType = "text/html"
+            $response.ContentType = "text/html; charset=utf-8"
             $response.ContentLength64 = $bytes.Length
             $response.StatusCode = 404
             $response.OutputStream.Write($bytes, 0, $bytes.Length)
         }
+
         $response.Close()
     }
 } finally {

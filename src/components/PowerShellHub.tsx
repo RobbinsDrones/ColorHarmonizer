@@ -47,13 +47,14 @@ export const PowerShellHub: React.FC<PowerShellHubProps> = ({ markers }) => {
       const zip = new JSZip();
       
       const filesToInclude = [
+        { name: 'RUN_APP.bat', url: '/powershell/RUN_APP.bat' },
+        { name: 'RUN_GUI.bat', url: '/powershell/RUN_GUI.bat' },
+        { name: 'ColorHarmonyLab-WebRunner.ps1', url: '/powershell/ColorHarmonyLab-WebRunner.ps1' },
         { name: 'ColorHarmonyLab-GUI.ps1', url: '/powershell/ColorHarmonyLab-GUI.ps1' },
         { name: 'Build-Exe.ps1', url: '/powershell/Build-Exe.ps1' },
-        { name: 'run.sh', url: '/powershell/run.sh' },
-        { name: 'RUN_APP.bat', url: '/powershell/RUN_APP.bat' },
-        { name: 'build-exe.sh', url: '/powershell/build-exe.sh' },
         { name: 'BUILD_EXE.bat', url: '/powershell/BUILD_EXE.bat' },
-        { name: 'ColorHarmonyLab-WebRunner.ps1', url: '/powershell/ColorHarmonyLab-WebRunner.ps1' },
+        { name: 'run.sh', url: '/powershell/run.sh' },
+        { name: 'build-exe.sh', url: '/powershell/build-exe.sh' },
         { name: 'ColorHarmonyLab-Offline.html', url: '/powershell/ColorHarmonyLab-Offline.html' },
         { name: 'RUN_OFFLINE_HTML.bat', url: '/powershell/RUN_OFFLINE_HTML.bat' },
       ];
@@ -70,24 +71,52 @@ export const PowerShellHub: React.FC<PowerShellHubProps> = ({ markers }) => {
         }
       }
 
+      // Add Full React Web App offline assets into /web
+      try {
+        const indexRes = await fetch('/powershell/web/index.html');
+        if (indexRes.ok) {
+          const indexHtml = await indexRes.text();
+          zip.file('web/index.html', indexHtml);
+
+          // Find relative asset links in index.html (./assets/...)
+          const assetMatches = indexHtml.match(/\.\/assets\/[^"'\s>]+/g) || [];
+          for (const assetRel of assetMatches) {
+            const cleanPath = assetRel.replace('./', '');
+            try {
+              const assetRes = await fetch(`/powershell/web/${cleanPath}`);
+              if (assetRes.ok) {
+                const assetBlob = await assetRes.blob();
+                zip.file(`web/${cleanPath}`, assetBlob);
+              }
+            } catch (err) {
+              console.warn(`Could not add web asset ${cleanPath}:`, err);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Could not bundle web folder to zip:', err);
+      }
+
       // Add README.txt with quickstart guide
       const readme = `========================================================================
-Photo Color Analysis & Harmony Lab - Native PowerShell & EXE Suite
+Photo Color Analysis & Harmony Lab - Full Offline Suite
 ========================================================================
 
 QUICK LAUNCH OPTIONS:
-1. Windows Explorer (No Terminal):
-   Double-click 'RUN_APP.bat' to launch the desktop application directly.
 
-2. Native Windows PowerShell / pwsh:
-   Open terminal in this directory and run:
+1. Full React Web App (Recommended - Full UI & Lightroom Preset Lab):
+   Double-click 'RUN_APP.bat'
+   - Starts local embedded web server (System.Net.HttpListener) on port 5050
+   - Opens Microsoft Edge or Google Chrome in native standalone window mode (--app)
+   - Serves the complete React application from the /web folder
+   - ZERO Node.js, npm, or Python required on your computer!
+
+2. Native Windows Forms GUI (.NET WinForms):
+   Double-click 'RUN_GUI.bat' or run in PowerShell:
    .\\ColorHarmonyLab-GUI.ps1
 
-3. MSYS2 / Git Bash / UCRT64:
-   Run either:
-   ./run.sh
-   or:
-   powershell.exe -ExecutionPolicy Bypass -File ./ColorHarmonyLab-GUI.ps1
+3. Direct Single-File HTML Launch:
+   Double-click 'RUN_OFFLINE_HTML.bat' or open 'ColorHarmonyLab-Offline.html'
 
 4. Compile into Standalone Windows .EXE:
    - Double-click 'BUILD_EXE.bat', or
@@ -95,12 +124,11 @@ QUICK LAUNCH OPTIONS:
    - In MSYS2/Git Bash: ./build-exe.sh
 
 ========================================================================
-FIX NOTES:
-- Resolved 'op_Modulus' method invocation on Object[] array.
-- Replaced PathGradientBrush.SurroundingColors with high-performance GDI+
-  wedge-gradient rendering compatible with all PowerShell versions.
-- Added interactive pin selection: click on color wheel pins to highlight
-  them on the photo and in the palette list.
+FEATURES IN THE FULL REACT VERSION (/web):
+- Advanced CIELAB color clustering with true area coverage percentages
+- Lightroom Classic .XMP Preset Generator (HSL Mixer + 3-Way Color Grading)
+- 50% neutral gray photographic matte and workspace themes
+- Color Wheel distribution with interactive harmonic spoke guide
 ========================================================================
 `;
       zip.file('README.txt', readme);
