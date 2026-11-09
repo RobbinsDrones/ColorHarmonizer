@@ -288,10 +288,10 @@ export const generateLightroomPreset = (
 
   // 1. Determine Target Harmony Angles on the 360 Color Wheel
   let targetHues = [primaryHue];
-  if (rule.includes('complementary') && !rule.includes('split')) {
+  if (rule.includes('split-complementary')) {
+    targetHues = [primaryHue, (primaryHue + 150) % 360, (primaryHue + 210) % 360];	
+  } else if (rule.includes('complementary') && !rule.includes('split')) {
     targetHues = [primaryHue, (primaryHue + 180) % 360];
-  } else if (rule.includes('split-complementary')) {
-    targetHues = [primaryHue, (primaryHue + 150) % 360, (primaryHue + 210) % 360];
   } else if (rule.includes('triadic')) {
     targetHues = [primaryHue, (primaryHue + 120) % 360, (primaryHue + 240) % 360];
   } else if (rule.includes('analogous')) {
@@ -361,8 +361,28 @@ export const generateLightroomPreset = (
     });
 
     if (samples.length > 0) {
-      // Calculate average hue of the sampled pins falling into this channel
-      const avgCurrentHue = samples.reduce((acc, m) => acc + m.hsl.h, 0) / samples.length;
+	  /**
+ * Calculates the circular mean of hue angles.
+ * Correctly handles the 0°/360° boundary.
+ *
+ * @param hues Array of hue values in degrees (0-360)
+ * @returns Average hue in degrees (0-360)
+ */
+export const circularMeanHue = (hues: number[]): number => {
+  if (hues.length === 0) return 0;
+
+  const radians = hues.map(h => (h * Math.PI) / 180);
+
+  const sinSum = radians.reduce((sum, h) => sum + Math.sin(h), 0);
+  const cosSum = radians.reduce((sum, h) => sum + Math.cos(h), 0);
+
+  const meanRadians = Math.atan2(sinSum, cosSum);
+
+  return (meanRadians * 180 / Math.PI + 360) % 360;
+};
+const avgCurrentHue = circularMeanHue(
+  samples.map(m => m.hsl.h)
+);
       const rawHueDiff = angleDiff(avgCurrentHue, closestTarget);
       
       // Conservative, proportional Hue adjustment (strictly within ±30):
