@@ -89,6 +89,21 @@ export const angleDiff = (a: number, b: number): number => {
   return diff < -180 ? diff + 360 : diff;
 };
 
+// Calculate circular mean of hue angles (handles 0°/360° boundary)
+export const circularMeanHue = (hues: number[]): number => {
+  if (hues.length === 0) return 0;
+
+  const radians = hues.map(h => (h * Math.PI) / 180);
+
+  const sinSum = radians.reduce((sum, h) => sum + Math.sin(h), 0);
+  const cosSum = radians.reduce((sum, h) => sum + Math.cos(h), 0);
+
+  const meanRadians = Math.atan2(sinSum, cosSum);
+
+  return (meanRadians * 180 / Math.PI + 360) % 360;
+};
+
+
 // Auto Harmony Detection Engine
 export const analyzeColorHarmony = (markers: ColorMarker[]): HarmonyDetectionResult => {
   if (markers.length === 0) {
@@ -361,26 +376,8 @@ export const generateLightroomPreset = (
     });
 
     if (samples.length > 0) {
-	  /**
- * Calculates the circular mean of hue angles.
- * Correctly handles the 0°/360° boundary.
- *
- * @param hues Array of hue values in degrees (0-360)
- * @returns Average hue in degrees (0-360)
- */
-export const circularMeanHue = (hues: number[]): number => {
-  if (hues.length === 0) return 0;
-
-  const radians = hues.map(h => (h * Math.PI) / 180);
-
-  const sinSum = radians.reduce((sum, h) => sum + Math.sin(h), 0);
-  const cosSum = radians.reduce((sum, h) => sum + Math.cos(h), 0);
-
-  const meanRadians = Math.atan2(sinSum, cosSum);
-
-  return (meanRadians * 180 / Math.PI + 360) % 360;
-};
-const avgCurrentHue = circularMeanHue(
+	
+	const avgCurrentHue = circularMeanHue(
   samples.map(m => m.hsl.h)
 );
       const rawHueDiff = angleDiff(avgCurrentHue, closestTarget);
