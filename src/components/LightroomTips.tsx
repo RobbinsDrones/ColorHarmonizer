@@ -2,9 +2,9 @@ import React, { useState, useMemo } from 'react';
 import { ColorMarker, HarmonyDetectionResult, LightroomPreset } from '../types';
 import { 
   Sliders, Download, Sparkles, Sun, Moon, Circle, Check, Copy, 
-  ExternalLink, FileCode2, Layers, Compass, HelpCircle, ChevronRight
+  ExternalLink, FileCode2, Layers, Compass, HelpCircle, ChevronRight, AlertCircle
 } from 'lucide-react';
-import { generateLightroomPreset, generateLightroomXmpPreset } from '../utils/colorUtils';
+import { generateLightroomPreset, generateLightroomXmpPreset, validateXmpXml } from '../utils/colorUtils';
 
 interface LightroomTipsProps {
   markers: ColorMarker[];
@@ -35,7 +35,18 @@ export const LightroomTips: React.FC<LightroomTipsProps> = ({
     return generateLightroomXmpPreset(preset);
   }, [preset]);
 
+  // Pre-validate XML
+  const xmlValidation = useMemo(() => {
+    return validateXmpXml(xmpContent);
+  }, [xmpContent]);
+
   const handleDownloadXmp = () => {
+    const validation = validateXmpXml(xmpContent);
+    if (!validation.valid) {
+      alert(`Cannot export preset: XML validation failed.\n${validation.error || ''}`);
+      return;
+    }
+
     const filename = `${preset.name.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}.xmp`;
     const blob = new Blob([xmpContent], { type: 'application/xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -75,9 +86,17 @@ export const LightroomTips: React.FC<LightroomTipsProps> = ({
               <Sliders className="w-4 h-4 text-indigo-400" />
               <span>Lightroom Color Mixer & Preset Lab</span>
             </h3>
-            <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-              .XMP Ready
-            </span>
+            {xmlValidation.valid ? (
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                <Check className="w-2.5 h-2.5 text-emerald-400" />
+                <span>XML Validated</span>
+              </span>
+            ) : (
+              <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
+                <AlertCircle className="w-2.5 h-2.5 text-rose-400" />
+                <span>XML Invalid</span>
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-400 mt-1">
             Calculated directly from your <span className="text-indigo-400 font-semibold">{markers.length} sampled points</span> to enforce <span className="text-amber-300 font-semibold">{activeHarmonyRule}</span> harmony.
@@ -228,7 +247,7 @@ export const LightroomTips: React.FC<LightroomTipsProps> = ({
             <span className="w-2 h-2 rounded-full bg-indigo-500" />
             <span>3. Specific Lightroom 8-Channel HSL Sliders</span>
           </h4>
-          <span className="text-[10px] text-slate-500 font-mono">Range: -100 to +100</span>
+          <span className="text-[10px] text-slate-400 font-mono">Photographic Limits: Hue ±30 • Sat ±35 • Lum ±25</span>
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">

@@ -361,48 +361,62 @@ export const generateLightroomPreset = (
     });
 
     if (samples.length > 0) {
-      // Calculate average shift needed for the sampled pins in this channel
+      // Calculate average hue of the sampled pins falling into this channel
       const avgCurrentHue = samples.reduce((acc, m) => acc + m.hsl.h, 0) / samples.length;
-      const rawHueShift = angleDiff(avgCurrentHue, closestTarget);
+      const rawHueDiff = angleDiff(avgCurrentHue, closestTarget);
       
-      // In Lightroom HSL sliders, -100 to +100 corresponds to approx -30° to +30° shift
-      // Scale: rawHueShift * (100 / 30) clamped to [-100, 100]
-      const lrHueShift = Math.max(-100, Math.min(100, Math.round(rawHueShift * 3.33)));
-
-      // If the channel is close to a target harmony angle, gently boost saturation to accent it
-      // If it is distant from all target harmony angles, desaturate slightly to clean up the palette
-      let satAdjust = 0;
-      let lumAdjust = 0;
-
-      if (minDiffToTarget <= 25) {
-        // Core harmony channel -> Enhance vibrancy and separation
-        satAdjust = Math.min(35, Math.max(8, Math.round((30 - minDiffToTarget) * 1.2)));
-        // Balanced luminance for clean photographic pop
-        lumAdjust = Math.round((50 - (samples.reduce((acc, m) => acc + m.hsl.l, 0) / samples.length)) * 0.25);
-      } else if (minDiffToTarget > 45) {
-        // Distracting rogue color outside harmony -> Clean up by desaturating
-        satAdjust = -Math.min(45, Math.round((minDiffToTarget - 35) * 0.8));
+      // Conservative, proportional Hue adjustment (strictly within ±30):
+      // Provides a photographic nudge towards harmony rather than forcing extreme color distortion
+      const absDiff = Math.abs(rawHueDiff);
+      const sign = rawHueDiff >= 0 ? 1 : -1;
+      let lrHueShift = 0;
+      if (absDiff <= 12) {
+        // Small angular deviations: gentle 1:1 proportional correction
+        lrHueShift = Math.round(rawHueDiff * 0.9);
+      } else if (absDiff <= 30) {
+        // Moderate deviations: proportional with diminishing curve
+        lrHueShift = Math.round(sign * (11 + (absDiff - 12) * 0.65));
+      } else {
+        // Larger deviations: conservative photographic cap
+        lrHueShift = Math.round(sign * Math.min(30, 23 + (absDiff - 30) * 0.25));
       }
+      lrHueShift = Math.max(-30, Math.min(30, lrHueShift));
+
+      // Conservative, proportional Saturation adjustment (strictly within ±35):
+      // Core harmony tones get gentle photographic enhancement (+4 to +16).
+      // Distant off-harmony tones get subtle dampening (-4 to -18) to clean the palette without stripping natural feel.
+      let satAdjust = 0;
+      if (minDiffToTarget <= 22) {
+        satAdjust = Math.round((25 - minDiffToTarget) * 0.65); // +2 to +16
+      } else if (minDiffToTarget > 45) {
+        satAdjust = -Math.round(Math.min(18, (minDiffToTarget - 40) * 0.45)); // -2 to -18
+      }
+      satAdjust = Math.max(-35, Math.min(35, satAdjust));
+
+      // Conservative Luminance adjustment (strictly within ±25):
+      // Gentle tonal shaping based on average lightness of sampled pins
+      const avgL = samples.reduce((acc, m) => acc + m.hsl.l, 0) / samples.length;
+      const lumAdjust = Math.max(-25, Math.min(25, Math.round((50 - avgL) * 0.16)));
 
       channelAdjustments[ch] = {
         hue: lrHueShift,
-        saturation: Math.max(-100, Math.min(100, satAdjust)),
-        luminance: Math.max(-100, Math.min(100, lumAdjust))
+        saturation: satAdjust,
+        luminance: lumAdjust
       };
     } else {
-      // Unsampled channel: gently align toward closest harmony pole or neutralize
-      if (minDiffToTarget <= 20) {
+      // Unsampled channel: conservative minor alignment or neutral
+      if (minDiffToTarget <= 15) {
         const rawShift = angleDiff(centerHue, closestTarget);
         channelAdjustments[ch] = {
-          hue: Math.max(-100, Math.min(100, Math.round(rawShift * 2.5))),
-          saturation: 5,
+          hue: Math.max(-10, Math.min(10, Math.round(rawShift * 0.4))),
+          saturation: 0,
           luminance: 0
         };
       } else if (minDiffToTarget > 60) {
-        // Distant color family: pull saturation down slightly to maintain disciplined palette harmony
+        // Rogue channel distant from all harmony spokes: subtle conservative reduction
         channelAdjustments[ch] = {
           hue: 0,
-          saturation: -18,
+          saturation: -8,
           luminance: 0
         };
       }
@@ -439,14 +453,14 @@ export const generateLightroomPreset = (
     midtoneHue = (primaryHue + 240) % 360;
   }
 
-  // Calculate grading saturation strengths (subtle, filmic photographic ranges)
-  const shadowSat = shadowSample ? Math.min(28, Math.max(8, Math.round(shadowSample.hsl.s * 0.35))) : 14;
-  const highlightSat = highlightSample ? Math.min(24, Math.max(6, Math.round(highlightSample.hsl.s * 0.30))) : 12;
-  const midtoneSat = midtoneSample ? Math.min(18, Math.max(4, Math.round(midtoneSample.hsl.s * 0.20))) : 8;
+  // Calculate grading saturation strengths (conservative photographic ranges: 6 to 18)
+  const shadowSat = shadowSample ? Math.min(18, Math.max(6, Math.round(shadowSample.hsl.s * 0.22))) : 12;
+  const highlightSat = highlightSample ? Math.min(16, Math.max(5, Math.round(highlightSample.hsl.s * 0.20))) : 10;
+  const midtoneSat = midtoneSample ? Math.min(12, Math.max(4, Math.round(midtoneSample.hsl.s * 0.15))) : 6;
 
-  // Calculate subtle luminance separation based on sampled dynamic range
-  const shadowLum = (shadowSample && shadowSample.hsl.l < 25) ? -4 : 0;
-  const highlightLum = (highlightSample && highlightSample.hsl.l > 75) ? 3 : 0;
+  // Calculate subtle luminance separation within reasonable bounds (well within ±25)
+  const shadowLum = (shadowSample && shadowSample.hsl.l < 25) ? -3 : 0;
+  const highlightLum = (highlightSample && highlightSample.hsl.l > 75) ? 2 : 0;
   const midtoneLum = 0;
 
   const colorGrading: LightroomThreeWayGrading = {
@@ -465,7 +479,7 @@ export const generateLightroomPreset = (
 
   // 4. Calculate Global Vibrance & Saturation from sampled colors
   // Muted/neutral scenes receive a gentle vibrance boost to lift subtle chromas cleanly.
-  // Saturated scenes receive controlled saturation roll-off (-5 to -10) to prevent digital clipping in Lightroom.
+  // Saturated scenes receive controlled saturation roll-off to prevent digital clipping in Lightroom.
   const avgSampleSat = markers.length > 0 
     ? markers.reduce((sum, m) => sum + m.hsl.s, 0) / markers.length 
     : 45;
@@ -474,25 +488,26 @@ export const generateLightroomPreset = (
   let calculatedSaturation = -4;
 
   if (avgSampleSat < 25) {
-    calculatedVibrance = 14;
+    calculatedVibrance = 12;
     calculatedSaturation = -2;
   } else if (avgSampleSat < 50) {
-    calculatedVibrance = 9;
-    calculatedSaturation = -5;
+    calculatedVibrance = 8;
+    calculatedSaturation = -4;
   } else if (avgSampleSat < 75) {
     calculatedVibrance = 5;
-    calculatedSaturation = -8;
+    calculatedSaturation = -6;
   } else {
     calculatedVibrance = 2;
-    calculatedSaturation = -12;
+    calculatedSaturation = -8;
   }
 
+  // Name incorporating selected harmony and primary hue
   const cleanPresetName = presetName || `Photo Harmony - ${harmonyRule} (${Math.round(primaryHue)}°)`;
 
   return {
     name: cleanPresetName,
     harmonyRule,
-    primaryHue,
+    primaryHue: Math.round(primaryHue),
     vibrance: calculatedVibrance,
     saturation: calculatedSaturation,
     hsl: channelAdjustments,
@@ -501,9 +516,60 @@ export const generateLightroomPreset = (
   };
 };
 
+// Helper: Escape XML special characters in attribute values
+const escapeXmlAttr = (str: string): string => {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+};
+
+// Validate generated XML structure and parseability for Lightroom Classic
+export const validateXmpXml = (xml: string): { valid: boolean; error?: string } => {
+  if (!xml || typeof xml !== 'string' || xml.trim().length === 0) {
+    return { valid: false, error: 'XMP XML string is empty.' };
+  }
+
+  // 1. Verify absence of comments inside opening element tags or attribute lists
+  const illegalCommentInTagRegex = /<[a-zA-Z0-9:]+\s+[^>]*?<!--/;
+  if (illegalCommentInTagRegex.test(xml)) {
+    return { valid: false, error: 'XML specification violation: comment found inside opening element tag or attribute list.' };
+  }
+
+  // 2. Verify root and namespaces
+  if (!xml.includes('<x:xmpmeta') || !xml.includes('</x:xmpmeta>')) {
+    return { valid: false, error: 'Missing standard <x:xmpmeta> root elements.' };
+  }
+  if (!xml.includes('xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"')) {
+    return { valid: false, error: 'Missing Adobe Camera Raw Settings namespace definition.' };
+  }
+  if (!xml.includes('crs:HasSettings="True"')) {
+    return { valid: false, error: 'Missing crs:HasSettings="True" develop flag.' };
+  }
+
+  // 3. Browser DOMParser strict validation
+  if (typeof DOMParser !== 'undefined') {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(xml, 'application/xml');
+      const parserError = doc.querySelector('parsererror');
+      if (parserError) {
+        return { valid: false, error: parserError.textContent || 'XML parser error.' };
+      }
+    } catch (e: any) {
+      return { valid: false, error: e?.message || 'XML parser execution failed.' };
+    }
+  }
+
+  return { valid: true };
+};
+
 // Generate standard Adobe Camera Raw / Lightroom Classic .xmp preset XML
 // Strictly contains HSL color mixer, 3-way color grading, and calculated global vibrance/saturation.
 // Zero changes to exposure, white balance, crop, sharpening, or noise reduction.
+// Guaranteed valid XML: No comments inside opening tags or attribute lists.
 export const generateLightroomXmpPreset = (preset: LightroomPreset): string => {
   const { hsl, colorGrading, name, harmonyRule, primaryHue, vibrance, saturation } = preset;
   const dateStr = new Date().toISOString();
@@ -520,6 +586,9 @@ export const generateLightroomXmpPreset = (preset: LightroomPreset): string => {
     });
   };
 
+  const safeName = escapeXmlAttr(name);
+  const safeDesc = escapeXmlAttr(`Photo Color Harmony Lab - ${harmonyRule} (Primary Hue: ${primaryHue}°)`);
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Adobe XMP Core 7.0-c000 1.000000, 0000/00/00-00:00:00">
  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
@@ -530,16 +599,14 @@ export const generateLightroomXmpPreset = (preset: LightroomPreset): string => {
     crs:UUID="${generateUuid()}"
     crs:SupportsAmount="True"
     crs:Amount="1.0"
-    crs:Name="${name}"
-    crs:Description="Photo Color Harmony Lab - ${harmonyRule} (Primary Hue: ${primaryHue}°)"
+    crs:Name="${safeName}"
+    crs:Description="${safeDesc}"
     crs:Date="${dateStr}"
     crs:HasSettings="True"
     crs:Version="16.0"
     crs:ProcessVersion="15.4"
     crs:Vibrance="${formatSigned(vibrance)}"
     crs:Saturation="${formatSigned(saturation)}"
-    
-    <!-- Lightroom HSL / Color Mixer: Hue Shifts (-100 to +100) -->
     crs:HueAdjustmentRed="${hsl.red.hue}"
     crs:HueAdjustmentOrange="${hsl.orange.hue}"
     crs:HueAdjustmentYellow="${hsl.yellow.hue}"
@@ -548,8 +615,6 @@ export const generateLightroomXmpPreset = (preset: LightroomPreset): string => {
     crs:HueAdjustmentBlue="${hsl.blue.hue}"
     crs:HueAdjustmentPurple="${hsl.purple.hue}"
     crs:HueAdjustmentMagenta="${hsl.magenta.hue}"
-    
-    <!-- Lightroom HSL / Color Mixer: Saturation Adjustments (-100 to +100) -->
     crs:SaturationAdjustmentRed="${hsl.red.saturation}"
     crs:SaturationAdjustmentOrange="${hsl.orange.saturation}"
     crs:SaturationAdjustmentYellow="${hsl.yellow.saturation}"
@@ -558,8 +623,6 @@ export const generateLightroomXmpPreset = (preset: LightroomPreset): string => {
     crs:SaturationAdjustmentBlue="${hsl.blue.saturation}"
     crs:SaturationAdjustmentPurple="${hsl.purple.saturation}"
     crs:SaturationAdjustmentMagenta="${hsl.magenta.saturation}"
-    
-    <!-- Lightroom HSL / Color Mixer: Luminance Adjustments (-100 to +100) -->
     crs:LuminanceAdjustmentRed="${hsl.red.luminance}"
     crs:LuminanceAdjustmentOrange="${hsl.orange.luminance}"
     crs:LuminanceAdjustmentYellow="${hsl.yellow.luminance}"
@@ -568,8 +631,6 @@ export const generateLightroomXmpPreset = (preset: LightroomPreset): string => {
     crs:LuminanceAdjustmentBlue="${hsl.blue.luminance}"
     crs:LuminanceAdjustmentPurple="${hsl.purple.luminance}"
     crs:LuminanceAdjustmentMagenta="${hsl.magenta.luminance}"
-    
-    <!-- Lightroom 3-Way Color Grading: Shadows, Midtones, Highlights -->
     crs:ColorGradeShadowHue="${colorGrading.shadowHue}"
     crs:ColorGradeShadowSat="${colorGrading.shadowSat}"
     crs:ColorGradeShadowLum="${colorGrading.shadowLum}"
@@ -583,8 +644,7 @@ export const generateLightroomXmpPreset = (preset: LightroomPreset): string => {
     crs:ColorGradeBalance="${colorGrading.balance}"
     crs:ColorGradeGlobalHue="0"
     crs:ColorGradeGlobalSat="0"
-    crs:ColorGradeGlobalLum="0">
-  </rdf:Description>
+    crs:ColorGradeGlobalLum="0" />
  </rdf:RDF>
 </x:xmpmeta>`;
 };

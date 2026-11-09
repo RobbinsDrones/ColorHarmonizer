@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ColorMarker } from '../types';
-import { X, Copy, Check, Download, FileText, Code2, Database, Sliders } from 'lucide-react';
-import { generateLightroomPreset, generateLightroomXmpPreset } from '../utils/colorUtils';
+import { X, Copy, Check, Download, FileText, Code2, Database, Sliders, AlertCircle } from 'lucide-react';
+import { generateLightroomPreset, generateLightroomXmpPreset, validateXmpXml } from '../utils/colorUtils';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -91,6 +91,15 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   };
 
   const handleDownload = () => {
+    // Validate XML before allowing download if exporting Lightroom XMP
+    if (format === 'xmp') {
+      const validation = validateXmpXml(content);
+      if (!validation.valid) {
+        alert(`Cannot download Lightroom preset: XML validation failed.\n${validation.error || ''}`);
+        return;
+      }
+    }
+
     const extensions: Record<string, string> = {
       xmp: 'xmp',
       json: 'json',
@@ -116,7 +125,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     const a = document.createElement('a');
     a.href = url;
     a.download = format === 'xmp' 
-      ? `photo-harmony-${detectedHarmony.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}.xmp` 
+      ? `photo-harmony-${detectedHarmony.toLowerCase().replace(/[^a-z0-9_-]/g, '-')}-${Math.round(primaryHue)}deg.xmp` 
       : `photo-harmony-palette.${ext}`;
     document.body.appendChild(a);
     a.click();
