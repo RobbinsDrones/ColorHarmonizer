@@ -59,19 +59,24 @@ if ($null -eq $webRoot) {
 Write-Host "[+] Serving Web Root: $webRoot" -ForegroundColor Green
 
 # Start HttpListener
+$listenerUrl = "http://*:$Port/"
 $listener = New-Object System.Net.HttpListener
-$listener.Prefixes.Add($hostUrl)
+$listener.Prefixes.Add($listenerUrl)
 
 try {
     $listener.Start()
     Write-Host "[+] Local HTTP Listener started on port $Port" -ForegroundColor Green
 } catch {
     Write-Warning "Could not start on port $Port ($($_.Exception.Message)). Trying port 5051..."
+
     $Port = 5051
     $hostUrl = "http://localhost:$Port/"
+    $listenerUrl = "http://*:$Port/"
+
     $listener = New-Object System.Net.HttpListener
-    $listener.Prefixes.Add($hostUrl)
+    $listener.Prefixes.Add($listenerUrl)
     $listener.Start()
+
     Write-Host "[+] Local HTTP Listener started on port $Port" -ForegroundColor Green
 }
 
